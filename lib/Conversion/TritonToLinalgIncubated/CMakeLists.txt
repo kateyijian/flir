@@ -28,4 +28,5 @@ add_triton_library(TritonToLinalgIncubated
   MLIRTritonNPUUtils
   MLIRSCFTransforms
   MLIRLinalgTransforms
+  TleToLinalg
 )
