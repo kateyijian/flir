@@ -85,7 +85,7 @@ def TileIR_SubViewOp : TileIR_Op<"subview", [Pure]> {
     Example:
     ```mlir
     %slot = tile.subview %buf[%off, %c0, %c0] [1, 128, 128] [1, 1, 1]
-              : !tile.buf<[2,128,128],f16,#tile.L0A> -> !tile.buf<[128,128],f16,#tile.L0A>
+              : !tile.buf<[2,128,128],f16,#tile.L0A> -> !tile.buf<[1,128,128],f16,#tile.L0A>
     ```
   }];
 
