@@ -85,7 +85,7 @@ def TileIR_SubViewOp : TileIR_Op<"subview", [Pure]> {
     Example:
     ```mlir
     %slot = tile.subview %buf[%off, %c0, %c0] [1, 128, 128] [1, 1, 1]
-              : !tile.buf<[2,128,128],f16,#tile.L0A> -> !tile.buf<[128,128],f16,#tile.L0A>
+              : !tile.buf<[2,128,128],f16,#tile.L0A> -> !tile.buf<[1,128,128],f16,#tile.L0A>
     ```
   }];
 
@@ -449,22 +449,23 @@ def TileIR_ToTensorOp : TileIR_Op<"to_tensor", [Pure]> {
 }
 
 // ---------------------------------------------------------------------------
-// tile.store_tensor — Store a tensor into a buffer
+// tile.store_tensor — Store a standard tensor into a TileIR buffer
 // ---------------------------------------------------------------------------
 def TileIR_StoreTensorOp : TileIR_Op<"store_tensor", [Pure, MemoryEffects<[MemWrite]>]> {
   let summary = "Store a tensor value into a buffer";
   let description = [{
-    Writes a tensor value back into a mutable buffer. Inverse of
-    tile.to_tensor.
+    Writes a standard ranked tensor value back into a mutable TileIR buffer.
+    This is the inverse boundary of tile.to_tensor, whose result intentionally
+    stays a standard tensor so Triton/arith/math ops can consume it directly.
 
     Example:
     ```mlir
-    tile.store_tensor %tensor → %buf : !tile.tensor<[128,128],f32,#tile.UB>
+    tile.store_tensor %tensor → %buf : tensor<128x128xf32>, !tile.buf<[128,128],f32,#tile.UB>
     ```
   }];
 
   let arguments = (ins
-    TileIR_TensorType:$src,
+    TT_Tensor:$src,
     TileIR_BufType:$dst
   );
 
