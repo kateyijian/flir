@@ -41,6 +41,14 @@ LogicalResult SubViewOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// LocalPtrOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LocalPtrOp::verify() {
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // GmOffsetOp
 //===----------------------------------------------------------------------===//
 
@@ -141,6 +149,34 @@ LogicalResult ToTensorOp::verify() {
 //===----------------------------------------------------------------------===//
 
 LogicalResult StoreTensorOp::verify() {
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// DataflowPipe*Op
+//===----------------------------------------------------------------------===//
+
+LogicalResult DataflowPipeCreateOp::verify() {
+  return success();
+}
+
+LogicalResult DataflowPipeWriterAcquireOp::verify() {
+  return success();
+}
+
+LogicalResult DataflowPipeWriterCommitOp::verify() {
+  return success();
+}
+
+LogicalResult DataflowPipeWriterCloseOp::verify() {
+  return success();
+}
+
+LogicalResult DataflowPipeReaderWaitOp::verify() {
+  return success();
+}
+
+LogicalResult DataflowPipeReaderReleaseOp::verify() {
   return success();
 }
 
