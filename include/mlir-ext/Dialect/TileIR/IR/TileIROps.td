@@ -105,6 +105,31 @@ def TileIR_SubViewOp : TileIR_Op<"subview", [Pure]> {
 }
 
 // ---------------------------------------------------------------------------
+// tile.local_ptr — Materialize GPU shared-memory pointers for a buffer view
+// ---------------------------------------------------------------------------
+def TileIR_LocalPointerResultType : AnyTypeOf<[TT_Tensor, TT_Ptr, TT_Int]>;
+def TileIR_LocalPointerIndexType : AnyTypeOf<[TT_Tensor, TT_Int]>;
+
+def TileIR_LocalPtrOp : TileIR_Op<"local_ptr", [Pure]> {
+  let summary = "Materialize pointers into a GPU shared-memory buffer";
+  let description = [{
+    Preserves the pointer-producing semantics of `tle.gpu.local_ptr` while the
+    source is represented as a `!tile.buf`. During GPU lowering this operation
+    becomes `tle.local_pointers` over the corresponding shared-memory memdesc.
+
+    An empty index list denotes the full buffer view. Scalar indices produce a
+    scalar pointer, while tensor indices produce a tensor of pointers.
+  }];
+
+  let arguments = (ins
+    TileIR_BufType:$source,
+    Variadic<TileIR_LocalPointerIndexType>:$indices
+  );
+
+  let results = (outs TileIR_LocalPointerResultType:$result);
+}
+
+// ---------------------------------------------------------------------------
 // tile.gm_offset — Compute global memory address with strides
 // ---------------------------------------------------------------------------
 def TileIR_GmOffsetOp : TileIR_Op<"gm_offset", [Pure, SameVariadicOperandSize]> {
@@ -154,6 +179,7 @@ def TileIR_CopyOp : TileIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
   let arguments = (ins
     AnyType:$src,
     AnyType:$dst,
+    Variadic<I32>:$indices,
     OptionalAttr<TileIR_Engine>:$engine,
     OptionalAttr<TileIR_Layout>:$src_layout,
     OptionalAttr<TileIR_NZLayoutAttr>:$dst_nz_layout,
@@ -162,7 +188,7 @@ def TileIR_CopyOp : TileIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
   );
 
   let assemblyFormat = [{
-    $src `->` $dst attr-dict `:` type($src) `,` type($dst)
+    $src `->` $dst (`[` $indices^ `]`)? attr-dict `:` type($src) `,` type($dst)
   }];
 }
 
@@ -474,6 +500,89 @@ def TileIR_StoreTensorOp : TileIR_Op<"store_tensor", [Pure, MemoryEffects<[MemWr
 //===----------------------------------------------------------------------===//
 // Synchronization Operations
 //===----------------------------------------------------------------------===//
+
+// ---------------------------------------------------------------------------
+// tile.pipe.* — Hardware-independent staged dataflow synchronization
+// ---------------------------------------------------------------------------
+def TileIR_DataflowPipeCreateOp : TileIR_Op<"pipe.create"> {
+  let summary = "Create a typed staged dataflow pipe";
+  let arguments = (ins
+    Variadic<TileIR_BufType>:$fields,
+    I32Attr:$capacity,
+    StrAttr:$scope,
+    OptionalAttr<StrAttr>:$pipe_name,
+    ArrayAttr:$field_names,
+    OptionalAttr<ArrayAttr>:$readers,
+    OptionalAttr<BoolAttr>:$one_shot
+  );
+  let assemblyFormat = "$fields attr-dict `:` type($fields)";
+}
+
+def TileIR_DataflowPipeWriterAcquireOp : TileIR_Op<"pipe.writer_acquire"> {
+  let arguments = (ins
+    Variadic<TileIR_BufType>:$fields,
+    I32:$stage,
+    I1:$phase,
+    I32Attr:$capacity,
+    StrAttr:$scope,
+    OptionalAttr<StrAttr>:$pipe_name,
+    ArrayAttr:$field_names
+  );
+  let assemblyFormat = "$fields `[` $stage `,` $phase `]` attr-dict `:` type($fields)";
+}
+
+def TileIR_DataflowPipeWriterCommitOp : TileIR_Op<"pipe.writer_commit"> {
+  let arguments = (ins
+    Variadic<TileIR_BufType>:$fields,
+    I32:$stage,
+    I32Attr:$capacity,
+    StrAttr:$scope,
+    OptionalAttr<StrAttr>:$pipe_name,
+    ArrayAttr:$field_names
+  );
+  let assemblyFormat = "$fields `[` $stage `]` attr-dict `:` type($fields)";
+}
+
+def TileIR_DataflowPipeWriterCloseOp : TileIR_Op<"pipe.writer_close"> {
+  let arguments = (ins
+    Variadic<TileIR_BufType>:$fields,
+    I32:$stage,
+    I1:$phase,
+    I32Attr:$capacity,
+    StrAttr:$scope,
+    OptionalAttr<StrAttr>:$pipe_name,
+    ArrayAttr:$field_names
+  );
+  let assemblyFormat = "$fields `[` $stage `,` $phase `]` attr-dict `:` type($fields)";
+}
+
+def TileIR_DataflowPipeReaderWaitOp : TileIR_Op<"pipe.reader_wait"> {
+  let arguments = (ins
+    Variadic<TileIR_BufType>:$fields,
+    I32:$stage,
+    I1:$phase,
+    I32Attr:$capacity,
+    StrAttr:$scope,
+    OptionalAttr<StrAttr>:$pipe_name,
+    ArrayAttr:$field_names,
+    OptionalAttr<StrAttr>:$reader_name
+  );
+  let results = (outs I1:$is_closed);
+  let assemblyFormat = "$fields `[` $stage `,` $phase `]` attr-dict `:` type($fields)";
+}
+
+def TileIR_DataflowPipeReaderReleaseOp : TileIR_Op<"pipe.reader_release"> {
+  let arguments = (ins
+    Variadic<TileIR_BufType>:$fields,
+    I32:$stage,
+    I32Attr:$capacity,
+    StrAttr:$scope,
+    OptionalAttr<StrAttr>:$pipe_name,
+    ArrayAttr:$field_names,
+    OptionalAttr<StrAttr>:$reader_name
+  );
+  let assemblyFormat = "$fields `[` $stage `]` attr-dict `:` type($fields)";
+}
 
 // ---------------------------------------------------------------------------
 // tile.set_flag — Set a cross-engine synchronization flag
