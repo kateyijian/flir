@@ -43,7 +43,7 @@ class CommonIR_Op<string mnemonic, list<Trait> traits = []> :
 // ---------------------------------------------------------------------------
 // tile.alloc — Allocate a buffer in a specific memory space
 // ---------------------------------------------------------------------------
-def CommonIR_AllocOp : CommonIR_Op<"alloc", []> {
+def CommonIR_AllocOp : CommonIR_Op<"alloc", [MemoryEffects<[MemAlloc]>]> {
   let summary = "Allocate a buffer in a specific memory space";
   let description = [{
     Allocates a buffer with given shape, dtype, and memory space attributes.
@@ -105,6 +105,32 @@ def CommonIR_SubViewOp : CommonIR_Op<"subview", [Pure]> {
 }
 
 // ---------------------------------------------------------------------------
+// tile.local_ptr — Describe indexed pointer access to a GPU buffer
+// ---------------------------------------------------------------------------
+def CommonIR_LocalPtrResultType : AnyTypeOf<[TT_Tensor, TT_Ptr]>;
+def CommonIR_LocalPtrIndexType : AnyTypeOf<[TT_Tensor, TT_Int]>;
+
+def CommonIR_LocalPtrOp : CommonIR_Op<"local_ptr", [Pure]> {
+  let summary = "Describe indexed pointer access to a GPU buffer";
+  let description = [{
+    Preserves the pointer-producing semantics of `tle.gpu.local_ptr` while the
+    allocation is represented as a `!tile.buf`. A target conversion lowers the
+    operation to the target's native buffer descriptor and pointer operation.
+
+    An empty index list denotes the full buffer view. Scalar indices produce a
+    scalar pointer; tensor indices produce a tensor of pointers.
+  }];
+
+  let arguments = (ins
+    CommonIR_BufType:$source,
+    Variadic<CommonIR_LocalPtrIndexType>:$indices
+  );
+
+  let results = (outs CommonIR_LocalPtrResultType:$result);
+
+}
+
+// ---------------------------------------------------------------------------
 // tile.gm_offset — Compute global memory address with strides
 // ---------------------------------------------------------------------------
 def CommonIR_GmOffsetOp : CommonIR_Op<"gm_offset", [Pure, SameVariadicOperandSize]> {
@@ -138,7 +164,7 @@ def CommonIR_GmOffsetOp : CommonIR_Op<"gm_offset", [Pure, SameVariadicOperandSiz
 // ---------------------------------------------------------------------------
 // tile.copy — Copy data between memory regions with layout conversion
 // ---------------------------------------------------------------------------
-def CommonIR_CopyOp : CommonIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
+def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> {
   let summary = "Copy data between memory regions with optional layout conversion";
   let description = [{
     Copies data from source to destination, optionally performing layout
@@ -154,6 +180,7 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
   let arguments = (ins
     AnyType:$src,
     AnyType:$dst,
+    Variadic<I32>:$indices,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_Layout>:$src_layout,
     OptionalAttr<CommonIR_NZLayoutAttr>:$dst_nz_layout,
@@ -162,7 +189,7 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
   );
 
   let assemblyFormat = [{
-    $src `->` $dst attr-dict `:` type($src) `,` type($dst)
+    $src `->` $dst (`[` $indices^ `]`)? attr-dict `:` type($src) `,` type($dst)
   }];
 }
 
@@ -451,7 +478,7 @@ def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor", [Pure]> {
 // ---------------------------------------------------------------------------
 // tile.store_tensor — Store a tensor into a buffer
 // ---------------------------------------------------------------------------
-def CommonIR_StoreTensorOp : CommonIR_Op<"store_tensor", [Pure, MemoryEffects<[MemWrite]>]> {
+def CommonIR_StoreTensorOp : CommonIR_Op<"store_tensor", [MemoryEffects<[MemRead, MemWrite]>]> {
   let summary = "Store a tensor value into a buffer";
   let description = [{
     Writes a tensor value back into a mutable buffer. Inverse of
