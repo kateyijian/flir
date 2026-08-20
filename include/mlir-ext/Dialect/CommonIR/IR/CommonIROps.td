@@ -22,6 +22,7 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 
 include "triton/Dialect/Triton/IR/TritonTypes.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
+include "triton/Dialect/TritonGPU/IR/TritonGPUTypes.td"
 
 include "mlir-ext/Dialect/CommonIR/IR/CommonIRDialect.td"
 include "mlir-ext/Dialect/CommonIR/IR/CommonIRAttrDefs.td"
@@ -43,7 +44,7 @@ class CommonIR_Op<string mnemonic, list<Trait> traits = []> :
 // ---------------------------------------------------------------------------
 // tile.alloc — Allocate a buffer in a specific memory space
 // ---------------------------------------------------------------------------
-def CommonIR_AllocOp : CommonIR_Op<"alloc", [MemoryEffects<[MemAlloc]>]> {
+def CommonIR_AllocOp : CommonIR_Op<"alloc", [Pure]> {
   let summary = "Allocate a buffer in a specific memory space";
   let description = [{
     Allocates a buffer with given shape, dtype, and memory space attributes.
@@ -131,6 +132,26 @@ def CommonIR_LocalPtrOp : CommonIR_Op<"local_ptr", [Pure]> {
 }
 
 // ---------------------------------------------------------------------------
+// tile.get_memdesc - Bridge a CommonIR buffer to a TritonGPU descriptor
+// ---------------------------------------------------------------------------
+def CommonIR_GetMemDescOp : CommonIR_Op<"get_memdesc", [Pure]> {
+  let summary = "Bridge a CommonIR buffer to a TritonGPU memory descriptor";
+  let description = [{
+    Materializes the descriptor view required by existing TritonGPU operations
+    while the allocation remains represented as a target-independent
+    `!tile.buf`. A target conversion replaces this bridge with the converted
+    descriptor value.
+  }];
+
+  let arguments = (ins CommonIR_BufType:$source);
+  let results = (outs TTG_MemDescType:$result);
+
+  let assemblyFormat = [{
+    $source attr-dict `:` type($source) `->` type($result)
+  }];
+}
+
+// ---------------------------------------------------------------------------
 // tile.gm_offset — Compute global memory address with strides
 // ---------------------------------------------------------------------------
 def CommonIR_GmOffsetOp : CommonIR_Op<"gm_offset", [Pure, SameVariadicOperandSize]> {
@@ -164,7 +185,7 @@ def CommonIR_GmOffsetOp : CommonIR_Op<"gm_offset", [Pure, SameVariadicOperandSiz
 // ---------------------------------------------------------------------------
 // tile.copy — Copy data between memory regions with layout conversion
 // ---------------------------------------------------------------------------
-def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> {
+def CommonIR_CopyOp : CommonIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
   let summary = "Copy data between memory regions with optional layout conversion";
   let description = [{
     Copies data from source to destination, optionally performing layout
@@ -180,7 +201,6 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
   let arguments = (ins
     AnyType:$src,
     AnyType:$dst,
-    Variadic<I32>:$indices,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_Layout>:$src_layout,
     OptionalAttr<CommonIR_NZLayoutAttr>:$dst_nz_layout,
@@ -189,7 +209,7 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> 
   );
 
   let assemblyFormat = [{
-    $src `->` $dst (`[` $indices^ `]`)? attr-dict `:` type($src) `,` type($dst)
+    $src `->` $dst attr-dict `:` type($src) `,` type($dst)
   }];
 }
 
@@ -478,7 +498,7 @@ def CommonIR_ToTensorOp : CommonIR_Op<"to_tensor", [Pure]> {
 // ---------------------------------------------------------------------------
 // tile.store_tensor — Store a tensor into a buffer
 // ---------------------------------------------------------------------------
-def CommonIR_StoreTensorOp : CommonIR_Op<"store_tensor", [MemoryEffects<[MemRead, MemWrite]>]> {
+def CommonIR_StoreTensorOp : CommonIR_Op<"store_tensor", [Pure, MemoryEffects<[MemWrite]>]> {
   let summary = "Store a tensor value into a buffer";
   let description = [{
     Writes a tensor value back into a mutable buffer. Inverse of
