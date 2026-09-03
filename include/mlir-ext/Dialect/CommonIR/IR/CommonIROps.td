@@ -22,6 +22,7 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
 
 include "triton/Dialect/Triton/IR/TritonTypes.td"
 include "triton/Dialect/Triton/IR/TritonInterfaces.td"
+include "triton/Dialect/TritonGPU/IR/TritonGPUTypes.td"
 
 include "mlir-ext/Dialect/CommonIR/IR/CommonIRDialect.td"
 include "mlir-ext/Dialect/CommonIR/IR/CommonIRAttrDefs.td"
@@ -43,7 +44,7 @@ class CommonIR_Op<string mnemonic, list<Trait> traits = []> :
 // ---------------------------------------------------------------------------
 // tile.alloc — Allocate a buffer in a specific memory space
 // ---------------------------------------------------------------------------
-def CommonIR_AllocOp : CommonIR_Op<"alloc", []> {
+def CommonIR_AllocOp : CommonIR_Op<"alloc", [Pure]> {
   let summary = "Allocate a buffer in a specific memory space";
   let description = [{
     Allocates a buffer with given shape, dtype, and memory space attributes.
@@ -101,6 +102,52 @@ def CommonIR_SubViewOp : CommonIR_Op<"subview", [Pure]> {
   let assemblyFormat = [{
     $source `[` $offsets `]` `[` $sizes `]` `[` $strides `]`
     attr-dict `:` type($source) `->` type($result)
+  }];
+}
+
+// ---------------------------------------------------------------------------
+// tile.local_ptr — Describe indexed pointer access to a GPU buffer
+// ---------------------------------------------------------------------------
+def CommonIR_LocalPtrResultType : AnyTypeOf<[TT_Tensor, TT_Ptr]>;
+def CommonIR_LocalPtrIndexType : AnyTypeOf<[TT_Tensor, TT_Int]>;
+
+def CommonIR_LocalPtrOp : CommonIR_Op<"local_ptr", [Pure]> {
+  let summary = "Describe indexed pointer access to a GPU buffer";
+  let description = [{
+    Preserves the pointer-producing semantics of `tle.gpu.local_ptr` while the
+    allocation is represented as a `!tile.buf`. A target conversion lowers the
+    operation to the target's native buffer descriptor and pointer operation.
+
+    An empty index list denotes the full buffer view. Scalar indices produce a
+    scalar pointer; tensor indices produce a tensor of pointers.
+  }];
+
+  let arguments = (ins
+    CommonIR_BufType:$source,
+    Variadic<CommonIR_LocalPtrIndexType>:$indices
+  );
+
+  let results = (outs CommonIR_LocalPtrResultType:$result);
+
+}
+
+// ---------------------------------------------------------------------------
+// tile.get_memdesc - Bridge a CommonIR buffer to a TritonGPU descriptor
+// ---------------------------------------------------------------------------
+def CommonIR_GetMemDescOp : CommonIR_Op<"get_memdesc", [Pure]> {
+  let summary = "Bridge a CommonIR buffer to a TritonGPU memory descriptor";
+  let description = [{
+    Materializes the descriptor view required by existing TritonGPU operations
+    while the allocation remains represented as a target-independent
+    `!tile.buf`. A target conversion replaces this bridge with the converted
+    descriptor value.
+  }];
+
+  let arguments = (ins CommonIR_BufType:$source);
+  let results = (outs TTG_MemDescType:$result);
+
+  let assemblyFormat = [{
+    $source attr-dict `:` type($source) `->` type($result)
   }];
 }
 
