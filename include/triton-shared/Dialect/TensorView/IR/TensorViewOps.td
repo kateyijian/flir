@@ -30,7 +30,7 @@ def TV_MakeTensorViewOp : TensorView_Op<"make_tensor_view",
   let description = [{
     `$source` is always a genuine `tv.ptr`: every construction site
     (`createTensorViewBase`) retypes or bridges a plain
-    `tt.ptr` value to `tv.ptr` itself, via `ensureTvPtr`, before ever
+    `tt.ptr` value to `tv.ptr` itself, via `convertToTensorViewPtr`, before ever
     building this op -- so there is nothing left for a lowering to reconcile
     later.
   }];

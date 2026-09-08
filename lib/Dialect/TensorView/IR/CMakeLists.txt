@@ -3,6 +3,7 @@ add_triton_library(TensorViewIR
   TensorViewTypes.cpp
   TensorViewAttrs.cpp
   TensorViewOps.cpp
+  TensorViewBuilder.cpp
 
   DEPENDS
   TensorViewTableGen
@@ -12,5 +13,6 @@ add_triton_library(TensorViewIR
 
   LINK_LIBS PUBLIC
   MLIRIR
+  MLIRArithDialect
   TritonIR
 )
