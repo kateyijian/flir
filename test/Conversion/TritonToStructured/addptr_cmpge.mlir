@@ -1,7 +1,12 @@
 // RUN: triton-shared-opt --triton-to-structured --split-input-file %s | FileCheck %s
 
 // These tests check that loads/stores that exhibit a cmp ge against 0 work
-// correctly with the pointer analysis pass
+// correctly with the pointer analysis pass.
+//
+// A `cmpi sge x, 0` mask is treated as always-true only when the lower bound
+// of x is statically >= 0. With a dynamic lower bound (e.g. offsets derived
+// from the program id), MaskAnalysis bails out and the load/store is left
+// untouched for the unstructured lowering, which preserves the mask.
 
 // Example of the triton kernel that generates the loads/stores with cmp ge 0.
 // The boundary_check fields of the load/stores, along with preprocessing the
@@ -44,10 +49,10 @@ tt.func public @test_masked_load(%arg0: !tt.ptr<f16>) -> tensor<16x16xf16> {
   tt.return %16 : tensor<16x16xf16>
 }
 
-// CHECK:         tt.func public @test_masked_load([[arg0_:%.+]]: !tt.ptr<f16>) -> tensor<16x16xf16> {
-// CHECK:           [[VAR_0_:%.+]] = tts.make_tptr [[arg0_]] to sizes: [16, 16], strides: [1, 0], offsets: [0, 0], shape: [0, 0], order: [] : <f16> to tensor<16x16x!tt.ptr<f16>>
-// CHECK:           [[VAR_1_:%.+]] = "tts.load"([[VAR_0_]]) <{operandSegmentSizes = array<i32: 1, 0, 0>, static_mask_dims = array<i64: 16, 16>}> : (tensor<16x16x!tt.ptr<f16>>) -> tensor<16x16xf16>
-// CHECK:         }
+// CHECK:         tt.func public @test_masked_load
+// CHECK:           tt.load
+// CHECK-NOT:       tts.load
+// CHECK:           tt.return
 
 // -----
 

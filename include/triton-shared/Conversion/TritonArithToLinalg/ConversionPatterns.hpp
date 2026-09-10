@@ -356,7 +356,11 @@ public:
                                                   loc, rewriter);
       auto zeroMap = AffineMap::getConstantMap(0, rewriter.getContext());
       auto loadOp = rewriter.create<affine::AffineLoadOp>(
+#if LLVM_VERSION_MAJOR >= 22
+          op.getLoc(), sMemRef, zeroMap, ValueRange());
+#else
           op.getLoc(), sMemRef, zeroMap, std::nullopt);
+#endif
       rewriter.replaceOp(op, loadOp.getResult());
       return success();
     }
@@ -515,8 +519,13 @@ struct StoreConverter : public OpConversionPattern<triton::StoreOp> {
       auto sMemRef =
           PtrAnalysis::getScalarMemRef(op.getPtr(), ptr, loc, rewriter);
       auto zeroMap = AffineMap::getConstantMap(0, rewriter.getContext());
+#if LLVM_VERSION_MAJOR >= 22
+      rewriter.create<affine::AffineStoreOp>(loc, val, sMemRef, zeroMap,
+                                             ValueRange());
+#else
       rewriter.create<affine::AffineStoreOp>(loc, val, sMemRef, zeroMap,
                                              std::nullopt);
+#endif
       rewriter.eraseOp(op);
       return success();
     }

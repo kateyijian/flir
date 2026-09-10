@@ -651,6 +651,16 @@ LogicalResult MaskState::parseCmp(arith::CmpIOp cmpOp, const Location loc,
   } else {
     assert(cmpOp.getPredicate() == arith::CmpIPredicate::sge && rhsState.scalar
            && hasConstZero(rhsState.scalar));
+    // For `(offs - n) >= 0` the valid lanes are the suffix [n, dims): the
+    // prefix-only mask-dims model cannot express a non-zero lower bound.
+    // Only when the lower bound is statically >= 0 is the comparison always
+    // true and the full dims correct. Otherwise bail out so the load/store
+    // falls back to the unstructured gather/scatter path, which preserves
+    // the mask instead of emitting a full-range access below the base.
+    auto startAttr = getIntAttr(lhsState.start);
+    if (!startAttr || startAttr.value() < 0) {
+      return failure();
+    }
     newDim = lhsState.dims[cmpDim];
   }
 

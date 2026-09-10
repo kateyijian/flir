@@ -36,3 +36,14 @@ void StoreOp::getEffects(
 OpFoldResult TypeOffsetOp::fold(FoldAdaptor adaptor) {
   return adaptor.getBaseTypeAttr();
 }
+
+#if LLVM_VERSION_MAJOR >= 22
+// The LLVM22 dialect td drops the OpBuilder that tablegen used to generate;
+// provide it here. Below LLVM22 the generated builder still exists, so a
+// hand-written definition would clash (redefinition).
+void TypeOffsetOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                         TypeAttr baseType, Type resultTy) {
+  build(odsBuilder, odsState,
+        resultTy ? resultTy : odsBuilder.getIndexType(), baseType);
+}
+#endif
