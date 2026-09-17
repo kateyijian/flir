@@ -172,25 +172,29 @@ def CommonIR_CopyOp : CommonIR_Op<"copy", [Pure, MemoryEffects<[MemWrite]>]> {
 def CommonIR_LoadOp : CommonIR_Op<"load", [Pure, MemoryEffects<[MemRead]>]> {
   let summary = "Load data from global memory to local memory";
   let description = [{
-    Loads a tensor from a GM pointer into the specified destination memory
-    space (typically UB for Vector compute).
+    Loads a tensor from a GM pointer (or tensor_view with indices) into the
+    specified destination memory space (typically UB for Vector compute).
 
-    Example:
+    Examples:
     ```mlir
+    // Pointer path:
     %t = tile.load %ptr {engine=#tile.mte2, dst_space=#tile.UB}
           : !tt.ptr<f32> -> !tile.tensor<[128,128],f32,#tile.UB>
+    // TensorView path:
+    %t = tile.load %view [%i0, %i1] : !tv.tensor_view<...> -> tensor<128x128xf16>
     ```
   }];
 
   let arguments = (ins
-    TT_Ptr:$src,
+    AnyType:$src,
+    Variadic<Index>:$indices,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_MemorySpace>:$dst_space
   );
 
-  let results = (outs CommonIR_TensorType:$result);
+  let results = (outs AnyTypeOf<[CommonIR_TensorType, AnyRankedTensor]>:$result);
 
-  let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result)";
+  let hasCustomAssemblyFormat = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,27 +203,31 @@ def CommonIR_LoadOp : CommonIR_Op<"load", [Pure, MemoryEffects<[MemRead]>]> {
 def CommonIR_StoreOp : CommonIR_Op<"store", [Pure, MemoryEffects<[MemWrite]>]> {
   let summary = "Store data from local memory to global memory";
   let description = [{
-    Stores a tensor from local memory (e.g., UB) to a GM pointer destination.
+    Stores a tensor from local memory (e.g., UB) to a GM pointer (or
+    tensor_view with indices) destination.
 
-    Example:
+    Examples:
     ```mlir
+    // Pointer path:
     tile.store %tensor → %ptr {engine=#tile.mte3, src_layout=#tile.nd,
                dst_layout=#tile.nd}
+    // TensorView path:
+    tile.store %tensor -> %view [%i0, %i1] : tensor<128x128xf16>, !tv.tensor_view<...>
     ```
   }];
 
   let arguments = (ins
     AnyType:$src,
-    TT_Ptr:$dst,
+    AnyType:$dst,
+    Variadic<Index>:$indices,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_Layout>:$src_layout,
     OptionalAttr<CommonIR_Layout>:$dst_layout,
-    OptionalAttr<StrAttr>:$comment
+    OptionalAttr<StrAttr>:$comment,
+    OptionalAttr<CommonIR_MemorySpace>:$src_space
   );
 
-  let assemblyFormat = [{
-    $src `->` $dst attr-dict `:` type($src) `,` type($dst)
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 // ---------------------------------------------------------------------------
