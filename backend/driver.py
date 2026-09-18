@@ -389,6 +389,9 @@ class CPUDriver(DriverBase):
     def get_current_target(self):
         return GPUTarget("cpu", 0, 0)
 
+    def map_python_to_cpp_type(self, ty: str) -> str:
+        return _ty_to_cpp(ty)
+
     def get_active_torch_device(self):
         import torch
         return torch.device("cpu")
