@@ -28,6 +28,15 @@ include "mlir-ext/Dialect/CommonIR/IR/CommonIRAttrDefs.td"
 include "mlir-ext/Dialect/CommonIR/IR/CommonIRTypes.td"
 
 //===----------------------------------------------------------------------===//
+// Index operand constraint
+//===----------------------------------------------------------------------===//
+// An index operand of tile.load / tile.store selecting a position in a
+// tensor_view. A scalar `index` selects a contiguous tile coordinate; a
+// rank-1 integer tensor supplies the per-lane coordinates of a gather_scatter
+// view sparse dimension.
+def CommonIR_ViewIndex : AnyTypeOf<[Index, RankedTensorOf<[Index, I32, I64]>]>;
+
+//===----------------------------------------------------------------------===//
 // Op Base
 //===----------------------------------------------------------------------===//
 
@@ -187,7 +196,7 @@ def CommonIR_LoadOp : CommonIR_Op<"load", [Pure, MemoryEffects<[MemRead]>]> {
 
   let arguments = (ins
     AnyType:$src,
-    Variadic<Index>:$indices,
+    Variadic<CommonIR_ViewIndex>:$indices,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_MemorySpace>:$dst_space
   );
@@ -219,7 +228,7 @@ def CommonIR_StoreOp : CommonIR_Op<"store", [Pure, MemoryEffects<[MemWrite]>]> {
   let arguments = (ins
     AnyType:$src,
     AnyType:$dst,
-    Variadic<Index>:$indices,
+    Variadic<CommonIR_ViewIndex>:$indices,
     OptionalAttr<CommonIR_Engine>:$engine,
     OptionalAttr<CommonIR_Layout>:$src_layout,
     OptionalAttr<CommonIR_Layout>:$dst_layout,

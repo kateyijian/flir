@@ -76,7 +76,10 @@ void LoadOp::print(OpAsmPrinter &p) {
     p << "]";
   }
   p.printOptionalAttrDict((*this)->getAttrs());
-  p << " : " << getSrc().getType() << " -> " << getResult().getType();
+  p << " : " << getSrc().getType();
+  for (Value index : indices)
+    p << ", " << index.getType();
+  p << " -> " << getResult().getType();
 }
 
 ParseResult LoadOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -93,13 +96,20 @@ ParseResult LoadOp::parse(OpAsmParser &parser, OperationState &result) {
       return failure();
   }
 
-  if (parser.parseOptionalAttrDict(result.attributes) ||
-      parser.parseColon() || parser.parseType(srcType) ||
-      parser.parseArrow() || parser.parseType(resultType))
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColon() ||
+      parser.parseType(srcType))
+    return failure();
+
+  SmallVector<Type, 4> indexTypes;
+  for (unsigned i = 0, e = indices.size(); i < e; ++i)
+    if (parser.parseComma() || parser.parseType(indexTypes.emplace_back()))
+      return failure();
+
+  if (parser.parseArrow() || parser.parseType(resultType))
     return failure();
 
   if (parser.resolveOperand(src, srcType, result.operands) ||
-      parser.resolveOperands(indices, parser.getBuilder().getIndexType(),
+      parser.resolveOperands(indices, indexTypes, parser.getCurrentLocation(),
                              result.operands))
     return failure();
 
@@ -128,6 +138,8 @@ void StoreOp::print(OpAsmPrinter &p) {
   }
   p.printOptionalAttrDict((*this)->getAttrs());
   p << " : " << getSrc().getType() << ", " << getDst().getType();
+  for (Value index : indices)
+    p << ", " << index.getType();
 }
 
 ParseResult StoreOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -145,14 +157,19 @@ ParseResult StoreOp::parse(OpAsmParser &parser, OperationState &result) {
       return failure();
   }
 
-  if (parser.parseOptionalAttrDict(result.attributes) ||
-      parser.parseColon() || parser.parseType(srcType) ||
-      parser.parseComma() || parser.parseType(dstType))
+  if (parser.parseOptionalAttrDict(result.attributes) || parser.parseColon() ||
+      parser.parseType(srcType) || parser.parseComma() ||
+      parser.parseType(dstType))
     return failure();
+
+  SmallVector<Type, 4> indexTypes;
+  for (unsigned i = 0, e = indices.size(); i < e; ++i)
+    if (parser.parseComma() || parser.parseType(indexTypes.emplace_back()))
+      return failure();
 
   if (parser.resolveOperand(src, srcType, result.operands) ||
       parser.resolveOperand(dst, dstType, result.operands) ||
-      parser.resolveOperands(indices, parser.getBuilder().getIndexType(),
+      parser.resolveOperands(indices, indexTypes, parser.getCurrentLocation(),
                              result.operands))
     return failure();
 
