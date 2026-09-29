@@ -10,7 +10,7 @@ module {
 
   // CHECK-LABEL: tt.func public @view_load(
   // CHECK-SAME: [[BASE:%.*]]: memref<?xf32>, [[SIZE:%.*]]: index, [[STRIDE:%.*]]: index, [[INDEX:%.*]]: index) -> tensor<4xf32> {
-  // CHECK-DAG: [[C1:%.*]] = arith.constant 1 : index
+  // CHECK-DAG: [[PADDING:%.*]] = arith.constant 0.000000e+00 : f32
   // CHECK-DAG: [[C0:%.*]] = arith.constant 0 : index
   // CHECK-DAG: [[C4:%.*]] = arith.constant 4 : index
   // CHECK: [[ORIGIN:%.*]] = arith.muli [[INDEX]], [[C4]] : index
@@ -28,21 +28,20 @@ module {
   // CHECK: scf.yield [[TENSOR]] : tensor<4xf32>
   // CHECK: } else {
   // CHECK: [[BOUNDARY_BUFFER:%.*]] = memref.alloc() : memref<4xf32>
-  // CHECK: [[PADDING:%.*]] = arith.constant 0.000000e+00 : f32
   // CHECK: linalg.fill ins([[PADDING]] : f32) outs([[BOUNDARY_BUFFER]] : memref<4xf32>)
-  // CHECK: [[BOUNDARY_ZERO:%.*]] = arith.constant 0 : index
-  // CHECK: [[BOUNDARY_ORIGIN:%.*]] = arith.muli [[INDEX]], {{%.*}} : index
-  // CHECK: [[LOWER_CLAMPED:%.*]] = arith.maxsi [[BOUNDARY_ORIGIN]], [[BOUNDARY_ZERO]] : index
+  // CHECK: [[BOUNDARY_ORIGIN:%.*]] = arith.muli [[INDEX]], [[C4]] : index
+  // CHECK: [[LOWER_CLAMPED:%.*]] = arith.maxsi [[BOUNDARY_ORIGIN]], [[C0]] : index
   // CHECK: [[BEGIN:%.*]] = arith.minsi [[LOWER_CLAMPED]], [[SIZE]] : index
   // CHECK: [[CLIPPED_END:%.*]] = arith.minsi {{%.*}}, [[SIZE]] : index
-  // CHECK: [[VALID_SIZE:%.*]] = arith.maxsi {{%.*}}, [[BOUNDARY_ZERO]] : index
-  // CHECK: [[NON_EMPTY:%.*]] = arith.cmpi sgt, [[VALID_SIZE]], [[BOUNDARY_ZERO]] : index
+  // CHECK: [[VALID_SIZE:%.*]] = arith.maxsi {{%.*}}, [[C0]] : index
+  // CHECK: [[NON_EMPTY:%.*]] = arith.cmpi sgt, [[VALID_SIZE]], [[C0]] : index
+  // CHECK: [[LOCAL_OFFSET:%.*]] = arith.minsi {{%.*}}, [[C4]] : index
   // CHECK: [[BOUNDARY_OFFSET:%.*]] = arith.muli [[BEGIN]], [[STRIDE]] : index
-  // CHECK: [[TRANSFER_SIZE:%.*]] = arith.select {{%.*}}, [[VALID_SIZE]], [[BOUNDARY_ZERO]] : index
+  // CHECK: [[TRANSFER_SIZE:%.*]] = arith.select [[NON_EMPTY]], [[VALID_SIZE]], [[C0]] : index
   // CHECK: [[BOUNDARY_GM:%.*]] = memref.reinterpret_cast [[BASE]] to offset: {{.}}[[BOUNDARY_OFFSET]]{{.}}, sizes: [4], strides: {{.}}[[STRIDE]]{{.}} : memref<?xf32> to memref<4xf32, strided<[?], offset: ?>>
-  // CHECK: [[BOUNDARY_LOCAL:%.*]] = memref.reinterpret_cast [[BOUNDARY_BUFFER]] to offset: {{.}}[[BOUNDARY_ZERO]]{{.}}, sizes: [4], strides: [1] : memref<4xf32> to memref<4xf32, strided<[1], offset: ?>>
+  // CHECK: [[BOUNDARY_LOCAL:%.*]] = memref.reinterpret_cast [[BOUNDARY_BUFFER]] to offset: {{.}}[[C0]]{{.}}, sizes: [4], strides: [1] : memref<4xf32> to memref<4xf32, strided<[1], offset: ?>>
   // CHECK: [[GM_SUBVIEW:%.*]] = memref.subview [[BOUNDARY_GM]][0] {{.}}[[TRANSFER_SIZE]]{{.}} [1] : memref<4xf32, strided<[?], offset: ?>> to memref<?xf32, strided<[?], offset: ?>>
-  // CHECK: [[LOCAL_SUBVIEW:%.*]] = memref.subview [[BOUNDARY_LOCAL]]{{.*}}{{.}}[[TRANSFER_SIZE]]{{.}} [1] : memref<4xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
+  // CHECK: [[LOCAL_SUBVIEW:%.*]] = memref.subview [[BOUNDARY_LOCAL]]{{.}}[[LOCAL_OFFSET]]{{.}} {{.}}[[TRANSFER_SIZE]]{{.}} [1] : memref<4xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
   // CHECK: memref.copy [[GM_SUBVIEW]], [[LOCAL_SUBVIEW]] : memref<?xf32, strided<[?], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
   // CHECK: [[PADDED:%.*]] = bufferization.to_tensor [[BOUNDARY_BUFFER]] restrict : memref<4xf32> to tensor<4xf32>
   // CHECK-NOT: memref.load
@@ -58,7 +57,6 @@ module {
 
   // CHECK-LABEL: tt.func public @view_store(
   // CHECK-SAME: [[BASE:%.*]]: memref<?xf32>, [[SIZE:%.*]]: index, [[STRIDE:%.*]]: index, [[INDEX:%.*]]: index, [[VALUE:%.*]]: tensor<4xf32>) {
-  // CHECK-DAG: [[C1:%.*]] = arith.constant 1 : index
   // CHECK-DAG: [[C4:%.*]] = arith.constant 4 : index
   // CHECK-DAG: [[C0:%.*]] = arith.constant 0 : index
   // CHECK-DAG: [[C8:%.*]] = arith.constant 8 : index
@@ -73,16 +71,15 @@ module {
   // CHECK: [[GM_TILE:%.*]] = memref.reinterpret_cast [[BASE]] to offset: {{.}}[[TILE_OFFSET]]{{.}}, sizes: [4], strides: {{.}}[[STRIDE]]{{.}} : memref<?xf32> to memref<4xf32, strided<[?], offset: ?>>
   // CHECK: bufferization.materialize_in_destination [[VALUE]] in writable [[GM_TILE]] : (tensor<4xf32>, memref<4xf32, strided<[?], offset: ?>>) -> ()
   // CHECK: } else {
-  // CHECK: [[VALUE_BUFFER:%.*]] = bufferization.to_{{memref|buffer}} [[VALUE]] : memref<4xf32>
-  // CHECK: [[BOUNDARY_ZERO:%.*]] = arith.constant 0 : index
+  // CHECK: [[VALUE_BUFFER:%.*]] = bufferization.to_{{memref|buffer}} [[VALUE]] : tensor<4xf32> to memref<4xf32>
   // CHECK: [[BOUNDARY_ORIGIN:%.*]] = arith.muli [[INDEX]], [[C8]] : index
-  // CHECK: [[LOWER_CLAMPED:%.*]] = arith.maxsi [[BOUNDARY_ORIGIN]], [[BOUNDARY_ZERO]] : index
+  // CHECK: [[LOWER_CLAMPED:%.*]] = arith.maxsi [[BOUNDARY_ORIGIN]], [[C0]] : index
   // CHECK: [[BEGIN:%.*]] = arith.minsi [[LOWER_CLAMPED]], [[SIZE]] : index
-  // CHECK: [[VALID_SIZE:%.*]] = arith.maxsi {{%.*}}, [[BOUNDARY_ZERO]] : index
+  // CHECK: [[VALID_SIZE:%.*]] = arith.maxsi {{%.*}}, [[C0]] : index
   // CHECK: [[GM_OFFSET:%.*]] = arith.muli [[BEGIN]], [[STRIDE]] : index
-  // CHECK: [[TRANSFER_SIZE:%.*]] = arith.select {{%.*}}, [[VALID_SIZE]], [[BOUNDARY_ZERO]] : index
+  // CHECK: [[TRANSFER_SIZE:%.*]] = arith.select {{%.*}}, [[VALID_SIZE]], [[C0]] : index
   // CHECK: [[BOUNDARY_GM:%.*]] = memref.reinterpret_cast [[BASE]] to offset: {{.}}[[GM_OFFSET]]{{.}}, sizes: [4], strides: {{.}}[[STRIDE]]{{.}} : memref<?xf32> to memref<4xf32, strided<[?], offset: ?>>
-  // CHECK: [[BOUNDARY_LOCAL:%.*]] = memref.reinterpret_cast [[VALUE_BUFFER]] to offset: {{.}}[[BOUNDARY_ZERO]]{{.}}, sizes: [4], strides: [1] : memref<4xf32> to memref<4xf32, strided<[1], offset: ?>>
+  // CHECK: [[BOUNDARY_LOCAL:%.*]] = memref.reinterpret_cast [[VALUE_BUFFER]] to offset: {{.}}[[C0]]{{.}}, sizes: [4], strides: [1] : memref<4xf32> to memref<4xf32, strided<[1], offset: ?>>
   // CHECK: [[GM_SUBVIEW:%.*]] = memref.subview [[BOUNDARY_GM]][0] {{.}}[[TRANSFER_SIZE]]{{.}} [1]
   // CHECK: [[LOCAL_SUBVIEW:%.*]] = memref.subview [[BOUNDARY_LOCAL]]{{.*}}{{.}}[[TRANSFER_SIZE]]{{.}} [1]
   // CHECK: memref.copy [[LOCAL_SUBVIEW]], [[GM_SUBVIEW]]
@@ -156,33 +153,38 @@ module {
 
   // CHECK-LABEL: tt.func public @gather_block_padding(
   // CHECK-SAME: [[BASE:%.*]]: memref<?xf32>, [[ROWS:%.*]]: index, [[COLUMNS:%.*]]: index, [[ROW_STRIDE:%.*]]: index, [[ROW_INDICES:%.*]]: tensor<2xi32>, [[COLUMN_BLOCK:%.*]]: index) -> tensor<2x4xf32> {
+  // CHECK-DAG: [[PADDING:%.*]] = arith.constant 0.000000e+00 : f32
+  // CHECK-DAG: [[C4:%.*]] = arith.constant 4 : index
+  // CHECK-DAG: [[C1:%.*]] = arith.constant 1 : index
+  // CHECK-DAG: [[C0:%.*]] = arith.constant 0 : index
+  // CHECK-DAG: [[C2:%.*]] = arith.constant 2 : index
+  // Every sparse index is range checked before a transfer is chosen.
+  // CHECK: [[ALL_IN_BOUNDS:%.*]] = scf.for {{%.*}} = [[C0]] to [[C2]] step [[C1]] iter_args({{%.*}} = {{%.*}}) -> (i1) {
+  // CHECK: [[RESULT:%.*]] = scf.if {{%.*}} -> (tensor<2x4xf32>) {
   // One tile-sized buffer is allocated ahead of the gather loop and every
   // sparse row lands in its own window, so no tensor is carried across
   // iterations.
-  // CHECK: [[RESULT:%.*]] = scf.if {{%.*}} -> (tensor<2x4xf32>) {
   // CHECK: [[IN_BOUNDS_BUFFER:%.*]] = memref.alloc() : memref<2x4xf32>
-  // CHECK: scf.for [[IN_BOUNDS_IV:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} {
+  // CHECK: scf.for [[IN_BOUNDS_IV:%.*]] = [[C0]] to [[C2]] step [[C1]] {
+  // CHECK: [[IN_BOUNDS_SLICE_OFFSET:%.*]] = arith.muli [[IN_BOUNDS_IV]], [[C4]] : index
+  // CHECK: tensor.extract [[ROW_INDICES]][[[IN_BOUNDS_IV]]] {DiscreteMemAccess} : tensor<2xi32>
   // CHECK: [[IN_BOUNDS_GM:%.*]] = memref.reinterpret_cast [[BASE]]{{.*}}sizes: [4], strides: [1] : memref<?xf32> to memref<4xf32, strided<[1], offset: ?>>
-  // CHECK: [[IN_BOUNDS_LOCAL:%.*]] = memref.reinterpret_cast [[IN_BOUNDS_BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<2x4xf32> to memref<4xf32, strided<[1], offset: ?>>
+  // CHECK: [[IN_BOUNDS_LOCAL:%.*]] = memref.reinterpret_cast [[IN_BOUNDS_BUFFER]] to offset: {{.}}[[IN_BOUNDS_SLICE_OFFSET]]{{.}}, sizes: [4], strides: [1] : memref<2x4xf32> to memref<4xf32, strided<[1], offset: ?>>
   // CHECK: memref.copy [[IN_BOUNDS_GM]], [[IN_BOUNDS_LOCAL]] : memref<4xf32, strided<[1], offset: ?>> to memref<4xf32, strided<[1], offset: ?>>
   // CHECK: } {hivm.parallel_loop}
   // CHECK: [[IN_BOUNDS_RESULT:%.*]] = bufferization.to_tensor [[IN_BOUNDS_BUFFER]] restrict : memref<2x4xf32> to tensor<2x4xf32>
   // CHECK: scf.yield [[IN_BOUNDS_RESULT]] : tensor<2x4xf32>
   // CHECK: } else {
-  // CHECK-DAG: [[C0:%.*]] = arith.constant 0 : index
-  // CHECK-DAG: [[C1:%.*]] = arith.constant 1 : index
-  // CHECK-DAG: [[C2:%.*]] = arith.constant 2 : index
   // CHECK: [[BUFFER:%.*]] = memref.alloc() : memref<2x4xf32>
-  // CHECK: [[ZERO:%.*]] = arith.constant 0.000000e+00 : f32
-  // CHECK: linalg.fill ins([[ZERO]] : f32) outs([[BUFFER]] : memref<2x4xf32>)
+  // CHECK: linalg.fill ins([[PADDING]] : f32) outs([[BUFFER]] : memref<2x4xf32>)
   // CHECK: scf.for [[IV:%.*]] = [[C0]] to [[C2]] step [[C1]] {
-  // CHECK: [[RAW_ROW:%.*]] = tensor.extract [[ROW_INDICES]][[[IV]]] : tensor<2xi32>
+  // CHECK: [[SLICE_OFFSET:%.*]] = arith.muli [[IV]], [[C4]] : index
+  // CHECK: [[RAW_ROW:%.*]] = tensor.extract [[ROW_INDICES]][[[IV]]] {DiscreteMemAccess} : tensor<2xi32>
   // CHECK: [[ROW:%.*]] = arith.index_cast [[RAW_ROW]] : i32 to index
   // CHECK: arith.maxsi [[ROW]], [[C0]] : index
-  // CHECK: arith.muli [[COLUMN_BLOCK]], {{%.*}} : index
-  // CHECK: arith.minsi
+  // CHECK: arith.muli [[COLUMN_BLOCK]], [[C4]] : index
   // CHECK: [[GM_BLOCK:%.*]] = memref.reinterpret_cast [[BASE]]{{.*}}sizes: [4], strides: [1] : memref<?xf32> to memref<4xf32, strided<[1], offset: ?>>
-  // CHECK: [[LOCAL_BLOCK:%.*]] = memref.reinterpret_cast [[BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<2x4xf32> to memref<4xf32, strided<[1], offset: ?>>
+  // CHECK: [[LOCAL_BLOCK:%.*]] = memref.reinterpret_cast [[BUFFER]] to offset: {{.}}[[SLICE_OFFSET]]{{.}}, sizes: [4], strides: [1] : memref<2x4xf32> to memref<4xf32, strided<[1], offset: ?>>
   // CHECK: [[GM_SUBVIEW:%.*]] = memref.subview [[GM_BLOCK]][0] {{.*}} [1] : memref<4xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
   // CHECK: [[LOCAL_SUBVIEW:%.*]] = memref.subview [[LOCAL_BLOCK]]{{.*}} : memref<4xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
   // CHECK: memref.copy [[GM_SUBVIEW]], [[LOCAL_SUBVIEW]] : memref<?xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
@@ -269,7 +271,7 @@ module {
 
   // CHECK-LABEL: tt.func public @multi_sparse_block_store(
   // CHECK: scf.if {{%.*}} {
-  // CHECK: [[VALUE_BUFFER:%.*]] = bufferization.to_{{memref|buffer}} {{%.*}} : memref<2x3x4xf32>
+  // CHECK: [[VALUE_BUFFER:%.*]] = bufferization.to_{{memref|buffer}} {{%.*}} : tensor<2x3x4xf32> to memref<2x3x4xf32>
   // CHECK: scf.for
   // CHECK: scf.for
   // CHECK: [[LOCAL:%.*]] = memref.reinterpret_cast [[VALUE_BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<2x3x4xf32> to memref<4xf32, strided<[1], offset: ?>>
@@ -277,7 +279,7 @@ module {
   // CHECK: } {hivm.parallel_loop}
   // CHECK: } {hivm.parallel_loop}
   // CHECK: } else {
-  // CHECK: [[BOUNDARY_VALUE_BUFFER:%.*]] = bufferization.to_{{memref|buffer}} {{%.*}} : memref<2x3x4xf32>
+  // CHECK: [[BOUNDARY_VALUE_BUFFER:%.*]] = bufferization.to_{{memref|buffer}} {{%.*}} : tensor<2x3x4xf32> to memref<2x3x4xf32>
   // CHECK: scf.for
   // CHECK: scf.for
   // CHECK: memref.copy {{%.*}}, {{%.*}}
@@ -295,7 +297,7 @@ module {
 
   // CHECK-LABEL: tt.func public @negative_infinity_padding(
   // CHECK-SAME: [[BASE:%.*]]: memref<?xf32>, [[SIZE:%.*]]: index, [[STRIDE:%.*]]: index, [[INDEX:%.*]]: index) -> tensor<4xf32> {
-  // CHECK-DAG: [[C1:%.*]] = arith.constant 1 : index
+  // CHECK-DAG: [[NEGATIVE_INFINITY:%.*]] = arith.constant 0xFF800000 : f32
   // CHECK-DAG: [[C0:%.*]] = arith.constant 0 : index
   // CHECK-DAG: [[C4:%.*]] = arith.constant 4 : index
   // CHECK: [[ORIGIN:%.*]] = arith.muli [[INDEX]], [[C4]] : index
@@ -313,7 +315,6 @@ module {
   // CHECK: scf.yield [[TENSOR]] : tensor<4xf32>
   // CHECK: } else {
   // CHECK: [[BOUNDARY_BUFFER:%.*]] = memref.alloc() : memref<4xf32>
-  // CHECK: [[NEGATIVE_INFINITY:%.*]] = arith.constant 0xFF800000 : f32
   // CHECK: linalg.fill ins([[NEGATIVE_INFINITY]] : f32) outs([[BOUNDARY_BUFFER]] : memref<4xf32>)
   // CHECK: memref.copy
   // CHECK-NOT: memref.load
@@ -328,7 +329,7 @@ module {
 
   // CHECK-LABEL: tt.func public @integer_zero_padding(
   // CHECK-SAME: [[BASE:%.*]]: memref<?xi32>, [[SIZE:%.*]]: index, [[STRIDE:%.*]]: index, [[INDEX:%.*]]: index) -> tensor<4xi32> {
-  // CHECK-DAG: [[C1:%.*]] = arith.constant 1 : index
+  // CHECK-DAG: [[ZERO:%.*]] = arith.constant 0 : i32
   // CHECK-DAG: [[C0:%.*]] = arith.constant 0 : index
   // CHECK-DAG: [[C4:%.*]] = arith.constant 4 : index
   // CHECK: [[ORIGIN:%.*]] = arith.muli [[INDEX]], [[C4]] : index
@@ -346,7 +347,6 @@ module {
   // CHECK: scf.yield [[TENSOR]] : tensor<4xi32>
   // CHECK: } else {
   // CHECK: [[BOUNDARY_BUFFER:%.*]] = memref.alloc() : memref<4xi32>
-  // CHECK: [[ZERO:%.*]] = arith.constant 0 : i32
   // CHECK: linalg.fill ins([[ZERO]] : i32) outs([[BOUNDARY_BUFFER]] : memref<4xi32>)
   // CHECK: memref.copy
   // CHECK-NOT: memref.load
