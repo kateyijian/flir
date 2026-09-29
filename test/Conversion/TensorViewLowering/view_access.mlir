@@ -146,40 +146,6 @@ module {
   // CHECK: scf.yield [[FALLBACK]] : tensor<4xf32>
   // CHECK: tt.return [[RESULT]] : tensor<4xf32>
 
-  tt.func public @gather_block_reshape(%base: !tv.ptr<f32>, %size0: index, %size1: index, %size2: index, %size3: index, %stride0: index, %stride1: index, %stride2: index, %indices: tensor<2xi32>, %block1: index, %index2: index, %block3: index) -> tensor<8x8xf32> {
-    %c1 = arith.constant 1 : index
-    %base_view = tv.make_tensor_view %base, sizes = [%size0, %size1, %size2, %size3], strides = [%stride0, %stride1, %stride2, %c1] : !tv.ptr<f32> -> !tv.tensor_view<?x?x?x?xf32, strides=[?, ?, ?, 1]>
-    %view = tv.make_gather_scatter_view %base_view : !tv.tensor_view<?x?x?x?xf32, strides=[?, ?, ?, 1]> -> !tv.tensor_view<?x?x?x?xf32, strides=[?, ?, ?, 1], #tv.gather_scatter_view<tile = [2, 4, 1, 8], sparse_dim = [0], padding_value = zero>>
-    %loaded = tv.view_load %view[%indices, %block1, %index2, %block3] : !tv.tensor_view<?x?x?x?xf32, strides=[?, ?, ?, 1], #tv.gather_scatter_view<tile = [2, 4, 1, 8], sparse_dim = [0], padding_value = zero>>, tensor<2xi32>, index, index, index -> tensor<2x4x1x8xf32>
-    %result = tt.reshape %loaded : tensor<2x4x1x8xf32> -> tensor<8x8xf32>
-    tt.return %result : tensor<8x8xf32>
-  }
-
-  // CHECK-LABEL: tt.func public @gather_block_reshape(
-  // CHECK: [[RESULT:%.*]] = scf.if {{%.*}} -> (tensor<8x8xf32>) {
-  // CHECK: [[EMPTY:%.*]] = tensor.empty() : tensor<8x8xf32>
-  // CHECK: [[GATHERED:%.*]] = scf.for [[IV:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} iter_args([[ACC:%.*]] = [[EMPTY]]) -> (tensor<8x8xf32>) {
-  // CHECK: [[BUFFER:%.*]] = memref.alloc() : memref<4x8xf32>
-  // CHECK: [[GM:%.*]] = memref.reinterpret_cast {{.*}} sizes: [4, 8], strides: {{.*}} : memref<?xf32> to memref<4x8xf32, strided<[?, 1], offset: ?>>
-  // CHECK: [[LOCAL:%.*]] = memref.reinterpret_cast [[BUFFER]]{{.*}}sizes: [4, 8], strides: [8, 1] : memref<4x8xf32> to memref<4x8xf32, strided<[8, 1], offset: ?>>
-  // CHECK: memref.copy [[GM]], [[LOCAL]]
-  // CHECK: [[SLICE:%.*]] = bufferization.to_tensor [[BUFFER]] restrict : memref<4x8xf32> to tensor<4x8xf32>
-  // CHECK: [[ROW:%.*]] = arith.muli {{%.*}}, {{%.*}} : index
-  // CHECK: [[INSERTED:%.*]] = tensor.insert_slice [[SLICE]] into [[ACC]][[[ROW]], 0] [4, 8] [1, 1] : tensor<4x8xf32> into tensor<8x8xf32>
-  // CHECK: scf.yield [[INSERTED]] : tensor<8x8xf32>
-  // CHECK: } {hivm.parallel_loop}
-  // CHECK: scf.yield [[GATHERED]] : tensor<8x8xf32>
-  // CHECK: } else {
-  // CHECK: tensor.empty() : tensor<8x8xf32>
-  // CHECK: scf.for {{.*}} iter_args
-  // CHECK: memref.alloc() : memref<4x8xf32>
-  // CHECK: linalg.fill
-  // CHECK: arith.select
-  // CHECK: memref.copy
-  // CHECK: tensor.insert_slice {{.*}} into {{.*}}[{{%.*}}, 0] [4, 8] [1, 1]
-  // CHECK-NOT: tt.reshape
-  // CHECK: tt.return [[RESULT]] : tensor<8x8xf32>
-
   tt.func public @gather_block_padding(%base: !tv.ptr<f32>, %rows: index, %columns: index, %row_stride: index, %row_indices: tensor<2xi32>, %column_block: index) -> tensor<2x4xf32> {
     %c1 = arith.constant 1 : index
     %base_view = tv.make_tensor_view %base, sizes = [%rows, %columns], strides = [%row_stride, %c1] : !tv.ptr<f32> -> !tv.tensor_view<?x?xf32, strides=[?, 1]>
@@ -190,43 +156,41 @@ module {
 
   // CHECK-LABEL: tt.func public @gather_block_padding(
   // CHECK-SAME: [[BASE:%.*]]: memref<?xf32>, [[ROWS:%.*]]: index, [[COLUMNS:%.*]]: index, [[ROW_STRIDE:%.*]]: index, [[ROW_INDICES:%.*]]: tensor<2xi32>, [[COLUMN_BLOCK:%.*]]: index) -> tensor<2x4xf32> {
+  // One tile-sized buffer is allocated ahead of the gather loop and every
+  // sparse row lands in its own window, so no tensor is carried across
+  // iterations.
   // CHECK: [[RESULT:%.*]] = scf.if {{%.*}} -> (tensor<2x4xf32>) {
-  // CHECK: [[IN_BOUNDS_EMPTY:%.*]] = tensor.empty() : tensor<2x4xf32>
-  // CHECK: [[IN_BOUNDS_RESULT:%.*]] = scf.for [[IN_BOUNDS_IV:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} iter_args([[IN_BOUNDS_ACC:%.*]] = [[IN_BOUNDS_EMPTY]]) -> (tensor<2x4xf32>) {
-  // CHECK: [[IN_BOUNDS_BUFFER:%.*]] = memref.alloc() : memref<1x4xf32>
+  // CHECK: [[IN_BOUNDS_BUFFER:%.*]] = memref.alloc() : memref<2x4xf32>
+  // CHECK: scf.for [[IN_BOUNDS_IV:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} {
   // CHECK: [[IN_BOUNDS_GM:%.*]] = memref.reinterpret_cast [[BASE]]{{.*}}sizes: [4], strides: [1] : memref<?xf32> to memref<4xf32, strided<[1], offset: ?>>
-  // CHECK: [[IN_BOUNDS_LOCAL:%.*]] = memref.reinterpret_cast [[IN_BOUNDS_BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<1x4xf32> to memref<4xf32, strided<[1], offset: ?>>
+  // CHECK: [[IN_BOUNDS_LOCAL:%.*]] = memref.reinterpret_cast [[IN_BOUNDS_BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<2x4xf32> to memref<4xf32, strided<[1], offset: ?>>
   // CHECK: memref.copy [[IN_BOUNDS_GM]], [[IN_BOUNDS_LOCAL]] : memref<4xf32, strided<[1], offset: ?>> to memref<4xf32, strided<[1], offset: ?>>
-  // CHECK: [[IN_BOUNDS_SLICE:%.*]] = bufferization.to_tensor [[IN_BOUNDS_BUFFER]] restrict : memref<1x4xf32> to tensor<1x4xf32>
-  // CHECK: [[IN_BOUNDS_INSERTED:%.*]] = tensor.insert_slice [[IN_BOUNDS_SLICE]] into [[IN_BOUNDS_ACC]][[[IN_BOUNDS_IV]], 0] [1, 4] [1, 1] : tensor<1x4xf32> into tensor<2x4xf32>
-  // CHECK: scf.yield [[IN_BOUNDS_INSERTED]] : tensor<2x4xf32>
   // CHECK: } {hivm.parallel_loop}
+  // CHECK: [[IN_BOUNDS_RESULT:%.*]] = bufferization.to_tensor [[IN_BOUNDS_BUFFER]] restrict : memref<2x4xf32> to tensor<2x4xf32>
   // CHECK: scf.yield [[IN_BOUNDS_RESULT]] : tensor<2x4xf32>
   // CHECK: } else {
-  // CHECK: [[BOUNDARY_EMPTY:%.*]] = tensor.empty() : tensor<2x4xf32>
   // CHECK-DAG: [[C0:%.*]] = arith.constant 0 : index
   // CHECK-DAG: [[C1:%.*]] = arith.constant 1 : index
   // CHECK-DAG: [[C2:%.*]] = arith.constant 2 : index
-  // CHECK: [[BOUNDARY_RESULT:%.*]] = scf.for [[IV:%.*]] = [[C0]] to [[C2]] step [[C1]] iter_args([[BOUNDARY_ACC:%.*]] = [[BOUNDARY_EMPTY]]) -> (tensor<2x4xf32>) {
-  // CHECK: [[BUFFER:%.*]] = memref.alloc() : memref<1x4xf32>
+  // CHECK: [[BUFFER:%.*]] = memref.alloc() : memref<2x4xf32>
   // CHECK: [[ZERO:%.*]] = arith.constant 0.000000e+00 : f32
-  // CHECK: linalg.fill ins([[ZERO]] : f32) outs([[BUFFER]] : memref<1x4xf32>)
+  // CHECK: linalg.fill ins([[ZERO]] : f32) outs([[BUFFER]] : memref<2x4xf32>)
+  // CHECK: scf.for [[IV:%.*]] = [[C0]] to [[C2]] step [[C1]] {
   // CHECK: [[RAW_ROW:%.*]] = tensor.extract [[ROW_INDICES]][[[IV]]] : tensor<2xi32>
   // CHECK: [[ROW:%.*]] = arith.index_cast [[RAW_ROW]] : i32 to index
   // CHECK: arith.maxsi [[ROW]], [[C0]] : index
   // CHECK: arith.muli [[COLUMN_BLOCK]], {{%.*}} : index
   // CHECK: arith.minsi
   // CHECK: [[GM_BLOCK:%.*]] = memref.reinterpret_cast [[BASE]]{{.*}}sizes: [4], strides: [1] : memref<?xf32> to memref<4xf32, strided<[1], offset: ?>>
-  // CHECK: [[LOCAL_BLOCK:%.*]] = memref.reinterpret_cast [[BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<1x4xf32> to memref<4xf32, strided<[1], offset: ?>>
+  // CHECK: [[LOCAL_BLOCK:%.*]] = memref.reinterpret_cast [[BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<2x4xf32> to memref<4xf32, strided<[1], offset: ?>>
   // CHECK: [[GM_SUBVIEW:%.*]] = memref.subview [[GM_BLOCK]][0] {{.*}} [1] : memref<4xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
   // CHECK: [[LOCAL_SUBVIEW:%.*]] = memref.subview [[LOCAL_BLOCK]]{{.*}} : memref<4xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
   // CHECK: memref.copy [[GM_SUBVIEW]], [[LOCAL_SUBVIEW]] : memref<?xf32, strided<[1], offset: ?>> to memref<?xf32, strided<[1], offset: ?>>
-  // CHECK: [[PADDED_SLICE:%.*]] = bufferization.to_tensor [[BUFFER]] restrict : memref<1x4xf32> to tensor<1x4xf32>
-  // CHECK: [[BOUNDARY_INSERTED:%.*]] = tensor.insert_slice [[PADDED_SLICE]] into [[BOUNDARY_ACC]][[[IV]], 0] [1, 4] [1, 1] : tensor<1x4xf32> into tensor<2x4xf32>
-  // CHECK: scf.yield [[BOUNDARY_INSERTED]] : tensor<2x4xf32>
   // CHECK: } {hivm.parallel_loop}
+  // CHECK: [[BOUNDARY_RESULT:%.*]] = bufferization.to_tensor [[BUFFER]] restrict : memref<2x4xf32> to tensor<2x4xf32>
   // CHECK: scf.yield [[BOUNDARY_RESULT]] : tensor<2x4xf32>
   // CHECK-NOT: memref.load
+  // CHECK-NOT: tensor.insert_slice
   // CHECK: tt.return [[RESULT]] : tensor<2x4xf32>
 
   tt.func public @gather_unit_dims_padding(%base: !tv.ptr<f32>, %size0: index, %size1: index, %size2: index, %size3: index, %stride0: index, %stride1: index, %stride2: index, %indices: tensor<2xi32>, %block1: index, %index2: index, %block3: index) -> tensor<2x4x1x8xf32> {
@@ -237,30 +201,28 @@ module {
     tt.return %result : tensor<2x4x1x8xf32>
   }
 
+  // Unit tile dimensions stay out of the DMA rank while the local buffer keeps
+  // the full logical tile shape.
   // CHECK-LABEL: tt.func public @gather_unit_dims_padding(
   // CHECK: [[RESULT:%.*]] = scf.if {{%.*}} -> (tensor<2x4x1x8xf32>) {
-  // CHECK: [[EMPTY:%.*]] = tensor.empty() : tensor<2x4x1x8xf32>
-  // CHECK: [[GATHERED:%.*]] = scf.for [[IV:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} iter_args([[ACC:%.*]] = [[EMPTY]]) -> (tensor<2x4x1x8xf32>) {
-  // CHECK: [[BUFFER:%.*]] = memref.alloc() : memref<1x4x1x8xf32>
+  // CHECK: [[BUFFER:%.*]] = memref.alloc() : memref<2x4x1x8xf32>
+  // CHECK: scf.for [[IV:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} {
   // CHECK: [[GM:%.*]] = memref.reinterpret_cast {{.*}} sizes: [4, 8], strides: {{.*}} : memref<?xf32> to memref<4x8xf32, strided<[?, 1], offset: ?>>
-  // CHECK: [[LOCAL:%.*]] = memref.reinterpret_cast [[BUFFER]]{{.*}}sizes: [4, 8], strides: [8, 1] : memref<1x4x1x8xf32> to memref<4x8xf32, strided<[8, 1], offset: ?>>
+  // CHECK: [[LOCAL:%.*]] = memref.reinterpret_cast [[BUFFER]]{{.*}}sizes: [4, 8], strides: [8, 1] : memref<2x4x1x8xf32> to memref<4x8xf32, strided<[8, 1], offset: ?>>
   // CHECK: memref.copy [[GM]], [[LOCAL]]
-  // CHECK: [[SLICE:%.*]] = bufferization.to_tensor [[BUFFER]] restrict : memref<1x4x1x8xf32> to tensor<1x4x1x8xf32>
-  // CHECK: [[INSERTED:%.*]] = tensor.insert_slice [[SLICE]] into [[ACC]][[[IV]], 0, 0, 0] [1, 4, 1, 8] [1, 1, 1, 1]
-  // CHECK: scf.yield [[INSERTED]] : tensor<2x4x1x8xf32>
   // CHECK: } {hivm.parallel_loop}
+  // CHECK: [[GATHERED:%.*]] = bufferization.to_tensor [[BUFFER]] restrict : memref<2x4x1x8xf32> to tensor<2x4x1x8xf32>
   // CHECK: scf.yield [[GATHERED]] : tensor<2x4x1x8xf32>
   // CHECK: } else {
-  // CHECK: tensor.empty() : tensor<2x4x1x8xf32>
-  // CHECK: scf.for {{.*}} iter_args
-  // CHECK: [[BOUNDARY_BUFFER:%.*]] = memref.alloc() : memref<1x4x1x8xf32>
-  // CHECK: linalg.fill {{.*}} outs([[BOUNDARY_BUFFER]] : memref<1x4x1x8xf32>)
+  // CHECK: [[BOUNDARY_BUFFER:%.*]] = memref.alloc() : memref<2x4x1x8xf32>
+  // CHECK: linalg.fill {{.*}} outs([[BOUNDARY_BUFFER]] : memref<2x4x1x8xf32>)
+  // CHECK: scf.for
   // CHECK: [[BOUNDARY_GM:%.*]] = memref.reinterpret_cast {{.*}} sizes: [4, 8], strides: {{.*}} : memref<?xf32> to memref<4x8xf32, strided<[?, 1], offset: ?>>
   // CHECK: memref.copy
-  // CHECK: bufferization.to_tensor [[BOUNDARY_BUFFER]] restrict : memref<1x4x1x8xf32> to tensor<1x4x1x8xf32>
-  // CHECK: tensor.insert_slice
   // CHECK: } {hivm.parallel_loop}
+  // CHECK: bufferization.to_tensor [[BOUNDARY_BUFFER]] restrict : memref<2x4x1x8xf32> to tensor<2x4x1x8xf32>
   // CHECK-NOT: memref.load
+  // CHECK-NOT: tensor.insert_slice
   // CHECK: tt.return [[RESULT]] : tensor<2x4x1x8xf32>
 
   tt.func public @multi_sparse_block_padding(%base: !tv.ptr<f32>, %size0: index, %size1: index, %size2: index, %stride0: index, %stride1: index, %index0: tensor<2xi32>, %index1: tensor<3xi32>, %block2: index) -> tensor<2x3x4xf32> {
@@ -271,33 +233,30 @@ module {
     tt.return %result : tensor<2x3x4xf32>
   }
 
+  // Two sparse dimensions nest two loops around a single tile buffer.
   // CHECK-LABEL: tt.func public @multi_sparse_block_padding(
   // CHECK: [[RESULT:%.*]] = scf.if {{%.*}} -> (tensor<2x3x4xf32>) {
-  // CHECK: [[EMPTY:%.*]] = tensor.empty() : tensor<2x3x4xf32>
-  // CHECK: [[OUTER:%.*]] = scf.for [[IV0:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} iter_args([[OUTER_ACC:%.*]] = [[EMPTY]]) -> (tensor<2x3x4xf32>) {
-  // CHECK: [[INNER:%.*]] = scf.for [[IV1:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} iter_args([[INNER_ACC:%.*]] = [[OUTER_ACC]]) -> (tensor<2x3x4xf32>) {
-  // CHECK: [[BUFFER:%.*]] = memref.alloc() : memref<1x1x4xf32>
+  // CHECK: [[BUFFER:%.*]] = memref.alloc() : memref<2x3x4xf32>
+  // CHECK: scf.for [[IV0:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} {
+  // CHECK: scf.for [[IV1:%.*]] = {{%.*}} to {{%.*}} step {{%.*}} {
   // CHECK: [[GM:%.*]] = memref.reinterpret_cast {{.*}} sizes: [4], strides: [1] : memref<?xf32> to memref<4xf32, strided<[1], offset: ?>>
-  // CHECK: [[LOCAL:%.*]] = memref.reinterpret_cast [[BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<1x1x4xf32> to memref<4xf32, strided<[1], offset: ?>>
+  // CHECK: [[LOCAL:%.*]] = memref.reinterpret_cast [[BUFFER]]{{.*}}sizes: [4], strides: [1] : memref<2x3x4xf32> to memref<4xf32, strided<[1], offset: ?>>
   // CHECK: memref.copy [[GM]], [[LOCAL]]
-  // CHECK: [[SLICE:%.*]] = bufferization.to_tensor [[BUFFER]] restrict : memref<1x1x4xf32> to tensor<1x1x4xf32>
-  // CHECK: [[INSERTED:%.*]] = tensor.insert_slice [[SLICE]] into [[INNER_ACC]][[[IV0]], [[IV1]], 0] [1, 1, 4] [1, 1, 1]
-  // CHECK: scf.yield [[INSERTED]] : tensor<2x3x4xf32>
   // CHECK: } {hivm.parallel_loop}
-  // CHECK: scf.yield [[INNER]] : tensor<2x3x4xf32>
   // CHECK: } {hivm.parallel_loop}
-  // CHECK: scf.yield [[OUTER]] : tensor<2x3x4xf32>
+  // CHECK: [[GATHERED:%.*]] = bufferization.to_tensor [[BUFFER]] restrict : memref<2x3x4xf32> to tensor<2x3x4xf32>
+  // CHECK: scf.yield [[GATHERED]] : tensor<2x3x4xf32>
   // CHECK: } else {
-  // CHECK: tensor.empty() : tensor<2x3x4xf32>
-  // CHECK: scf.for {{.*}} iter_args
-  // CHECK: scf.for {{.*}} iter_args
-  // CHECK: [[BOUNDARY_BUFFER:%.*]] = memref.alloc() : memref<1x1x4xf32>
-  // CHECK: linalg.fill {{.*}} outs([[BOUNDARY_BUFFER]] : memref<1x1x4xf32>)
+  // CHECK: [[BOUNDARY_BUFFER:%.*]] = memref.alloc() : memref<2x3x4xf32>
+  // CHECK: linalg.fill {{.*}} outs([[BOUNDARY_BUFFER]] : memref<2x3x4xf32>)
+  // CHECK: scf.for
+  // CHECK: scf.for
   // CHECK: memref.copy
-  // CHECK: tensor.insert_slice
   // CHECK: } {hivm.parallel_loop}
   // CHECK: } {hivm.parallel_loop}
+  // CHECK: bufferization.to_tensor [[BOUNDARY_BUFFER]] restrict : memref<2x3x4xf32> to tensor<2x3x4xf32>
   // CHECK-NOT: memref.load
+  // CHECK-NOT: tensor.insert_slice
   // CHECK: tt.return [[RESULT]] : tensor<2x3x4xf32>
 
   tt.func public @multi_sparse_block_store(%base: !tv.ptr<f32>, %size0: index, %size1: index, %size2: index, %stride0: index, %stride1: index, %index0: tensor<2xi32>, %index1: tensor<3xi32>, %block2: index, %value: tensor<2x3x4xf32>) {

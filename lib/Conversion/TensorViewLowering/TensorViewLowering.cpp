@@ -528,70 +528,6 @@ static void emitBlockCopy(OpBuilder &b, Location loc, const ViewData &vi,
     b.create<memref::CopyOp>(loc, gm, local);
 }
 
-struct SparseResultLayout {
-  SmallVector<int64_t> shape;
-  SmallVector<int64_t> sliceShape;
-  unsigned splitDim;
-  int64_t splitSize;
-  int64_t chunksAtSplit;
-};
-
-static std::optional<SparseResultLayout>
-buildSparseResultLayout(const ViewData &vi, RankedTensorType resultType) {
-  if (!resultType.hasStaticShape())
-    return std::nullopt;
-
-  bool reachedDenseDimensions = false;
-  int64_t previousSparseDim = -1;
-  int64_t sparseSlices = 1;
-  for (int64_t dim : vi.sparseDims) {
-    if (dim <= previousSparseDim || dim < 0 ||
-        dim >= static_cast<int64_t>(vi.rank))
-      return std::nullopt;
-    previousSparseDim = dim;
-    sparseSlices *= vi.tile[dim];
-  }
-  for (unsigned dim = 0; dim < vi.rank; ++dim) {
-    bool sparse = llvm::is_contained(vi.sparseDims, static_cast<int64_t>(dim));
-    if (sparse && reachedDenseDimensions)
-      return std::nullopt;
-    if (!sparse && vi.tile[dim] != 1)
-      reachedDenseDimensions = true;
-  }
-
-  int64_t sourceElements = 1;
-  for (int64_t size : vi.tile)
-    sourceElements *= size;
-  if (sourceElements != resultType.getNumElements())
-    return std::nullopt;
-
-  int64_t sliceElements = sourceElements / sparseSlices;
-  ArrayRef<int64_t> resultShape = resultType.getShape();
-  int64_t suffixElements = 1;
-  for (unsigned dim = resultShape.size(); dim > 0; --dim) {
-    unsigned candidate = dim - 1;
-    if (sliceElements % suffixElements == 0) {
-      int64_t splitSize = sliceElements / suffixElements;
-      if (splitSize <= resultShape[candidate] &&
-          resultShape[candidate] % splitSize == 0) {
-        SparseResultLayout layout;
-        layout.shape.assign(resultShape.begin(), resultShape.end());
-        layout.sliceShape.assign(resultShape.size(), 1);
-        layout.splitDim = candidate;
-        layout.splitSize = splitSize;
-        layout.chunksAtSplit = resultShape[candidate] / splitSize;
-        for (unsigned trailing = candidate + 1; trailing < resultShape.size();
-             ++trailing)
-          layout.sliceShape[trailing] = resultShape[trailing];
-        layout.sliceShape[candidate] = splitSize;
-        return layout;
-      }
-    }
-    suffixElements *= resultShape[candidate];
-  }
-  return std::nullopt;
-}
-
 static Value buildSparseSliceOffset(OpBuilder &b, Location loc,
                                     const ViewData &vi,
                                     ArrayRef<Value> sparseCoordinates) {
@@ -606,134 +542,33 @@ static Value buildSparseSliceOffset(OpBuilder &b, Location loc,
   return offset;
 }
 
-static Value emitSparseBlockLoad(OpBuilder &b, Location loc, const ViewData &vi,
-                                 ValueRange indices,
-                                 const PhysicalTransferLayout &layout,
-                                 bool boundary, unsigned sparsePosition,
-                                 SmallVectorImpl<Value> &sparseCoordinates,
-                                 Value result,
-                                 const SparseResultLayout *resultLayout) {
-  if (sparsePosition != vi.sparseDims.size()) {
-    unsigned dim = vi.sparseDims[sparsePosition];
-    Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
-    Value one = b.create<arith::ConstantIndexOp>(loc, 1);
-    Value upper = b.create<arith::ConstantIndexOp>(loc, vi.tile[dim]);
-    auto loop = b.create<scf::ForOp>(loc, zero, upper, one, ValueRange{result});
-    loop->setAttr("hivm.parallel_loop", b.getUnitAttr());
-    {
-      OpBuilder::InsertionGuard guard(b);
-      b.setInsertionPointToStart(loop.getBody());
-      sparseCoordinates[dim] = loop.getInductionVar();
-      Value next = emitSparseBlockLoad(b, loc, vi, indices, layout, boundary,
-                                       sparsePosition + 1, sparseCoordinates,
-                                       loop.getRegionIterArg(0), resultLayout);
-      b.create<scf::YieldOp>(loc, next);
-    }
-    sparseCoordinates[dim] = Value();
-    return loop.getResult(0);
-  }
-
-  SmallVector<int64_t> sliceShape;
-  if (resultLayout) {
-    sliceShape = resultLayout->sliceShape;
-  } else {
-    sliceShape.assign(vi.tile.begin(), vi.tile.end());
-    for (int64_t dim : vi.sparseDims)
-      sliceShape[dim] = 1;
-  }
-  auto sliceType = MemRefType::get(sliceShape, vi.elementType);
-  Value slice = b.create<memref::AllocOp>(loc, sliceType);
-  if (boundary) {
-    Value padding = createPaddingConstant(b, loc, vi);
-    b.create<linalg::FillOp>(loc, ValueRange{padding}, ValueRange{slice});
-  }
-
-  SmallVector<int64_t> transferStrides;
-  if (resultLayout) {
-    transferStrides = computeRowMajorStrides(layout.shape);
-  } else {
-    SmallVector<int64_t> sliceStrides = computeRowMajorStrides(sliceShape);
-    for (unsigned dim : layout.logicalDims)
-      transferStrides.push_back(sliceStrides[dim]);
-  }
-  Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
-  emitBlockCopy(b, loc, vi, slice, zero, transferStrides, indices,
-                sparseCoordinates, layout, boundary, /*store=*/false);
-
-  auto sliceTensorType = RankedTensorType::get(sliceShape, vi.elementType);
-  Value sliceTensor = b.create<bufferization::ToTensorOp>(
-      loc, sliceTensorType, slice, /*restrict=*/true, /*writable=*/false);
-  SmallVector<OpFoldResult> offsets, sizes, strides;
-  if (!resultLayout) {
-    for (unsigned d = 0; d < vi.rank; ++d)
-      offsets.push_back(sparseCoordinates[d]
-                            ? OpFoldResult(sparseCoordinates[d])
-                            : OpFoldResult(b.getIndexAttr(0)));
-  } else {
-    Value ordinal = b.create<arith::ConstantIndexOp>(loc, 0);
-    for (int64_t dim : vi.sparseDims) {
-      ordinal = b.create<arith::MulIOp>(
-          loc, ordinal, b.create<arith::ConstantIndexOp>(loc, vi.tile[dim]));
-      ordinal = b.create<arith::AddIOp>(loc, ordinal, sparseCoordinates[dim]);
-    }
-
-    offsets.assign(resultLayout->shape.size(), b.getIndexAttr(0));
-    Value remaining = ordinal;
-    for (unsigned dim = resultLayout->splitDim + 1; dim > 0; --dim) {
-      unsigned resultDim = dim - 1;
-      int64_t chunks = resultDim == resultLayout->splitDim
-                           ? resultLayout->chunksAtSplit
-                           : resultLayout->shape[resultDim];
-      Value coordinate = remaining;
-      if (resultDim != 0) {
-        Value divisor = b.create<arith::ConstantIndexOp>(loc, chunks);
-        coordinate = b.create<arith::RemSIOp>(loc, remaining, divisor);
-        remaining = b.create<arith::DivSIOp>(loc, remaining, divisor);
-      }
-      if (resultDim == resultLayout->splitDim)
-        coordinate = b.create<arith::MulIOp>(
-            loc, coordinate,
-            b.create<arith::ConstantIndexOp>(loc, resultLayout->splitSize));
-      offsets[resultDim] = coordinate;
-    }
-  }
-  for (int64_t size : sliceShape) {
-    sizes.push_back(b.getIndexAttr(size));
-    strides.push_back(b.getIndexAttr(1));
-  }
-  return b.create<tensor::InsertSliceOp>(loc, sliceTensor, result, offsets,
-                                         sizes, strides);
-}
-
 static Value emitBlockLoad(OpBuilder &b, Location loc, const ViewData &vi,
                            ValueRange indices,
                            const PhysicalTransferLayout &layout,
-                           RankedTensorType resultType, bool boundary,
-                           const SparseResultLayout *resultLayout = nullptr) {
+                           RankedTensorType resultType, bool boundary) {
   bool sparse = vi.isGatherScatter();
-  if (sparse) {
-    Value result = b.create<tensor::EmptyOp>(loc, resultType.getShape(),
-                                             resultType.getElementType());
-    SmallVector<Value> sparseCoordinates(vi.rank);
-    return emitSparseBlockLoad(b, loc, vi, indices, layout, boundary,
-                               /*sparsePosition=*/0, sparseCoordinates, result,
-                               resultLayout);
-  }
-
-  auto bufferType = MemRefType::get(layout.shape, vi.elementType);
+  // One local buffer for the whole tile: every sparse slice is copied straight
+  // into its own window, so the loop needs neither its own allocation nor a
+  // tensor carried across iterations.
+  auto bufferType = MemRefType::get(sparse ? ArrayRef<int64_t>(vi.tile)
+                                           : ArrayRef<int64_t>(layout.shape),
+                                    vi.elementType);
   Value buffer = b.create<memref::AllocOp>(loc, bufferType);
   if (boundary) {
     Value padding = createPaddingConstant(b, loc, vi);
     b.create<linalg::FillOp>(loc, ValueRange{padding}, ValueRange{buffer});
   }
 
-  Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
   SmallVector<Value> sparseCoordinates(vi.rank);
-  emitBlockCopy(b, loc, vi, buffer, zero, layout.localStrideStatic, indices,
-                sparseCoordinates, layout, boundary, /*store=*/false);
+  emitSparseCoordinateLoops(
+      b, loc, vi, 0, sparseCoordinates, [&](ArrayRef<Value> coordinates) {
+        Value offset = buildSparseSliceOffset(b, loc, vi, coordinates);
+        emitBlockCopy(b, loc, vi, buffer, offset, layout.localStrideStatic,
+                      indices, coordinates, layout, boundary, /*store=*/false);
+      });
 
   Value tensorBuffer = buffer;
-  if (layout.collapses(vi.rank)) {
+  if (!sparse && layout.collapses(vi.rank)) {
     auto logicalType = MemRefType::get(vi.tile, vi.elementType);
     tensorBuffer = b.create<memref::ExpandShapeOp>(loc, logicalType, buffer,
                                                    layout.reassociation);
@@ -882,22 +717,6 @@ static LogicalResult lowerViewLoad(tv::ViewLoadOp load,
   if (!vi.isGatherScatter() && !transferLayout)
     return failure();
 
-  triton::ReshapeOp reshape;
-  std::optional<SparseResultLayout> resultLayout;
-  if (vi.isGatherScatter() && transferLayout && load.getResult().hasOneUse()) {
-    reshape = dyn_cast<triton::ReshapeOp>(*load.getResult().user_begin());
-    if (reshape && !reshape->hasAttr("allow_reorder")) {
-      auto reshapeType =
-          dyn_cast<RankedTensorType>(reshape.getResult().getType());
-      if (reshapeType)
-        resultLayout = buildSparseResultLayout(vi, reshapeType);
-    }
-    if (!resultLayout)
-      reshape = nullptr;
-    else
-      tensorTy = cast<RankedTensorType>(reshape.getResult().getType());
-  }
-
   vi.base = materializeBase(b, loc, vi);
   Value accessInBounds =
       buildAccessInBoundsCondition(b, loc, vi, load.getIndices());
@@ -906,14 +725,13 @@ static LogicalResult lowerViewLoad(tv::ViewLoadOp load,
       [&](OpBuilder &nested, Location nestedLoc) {
         Value result;
         if (vi.isGatherScatter()) {
-          result =
-              transferLayout
-                  ? emitBlockLoad(nested, nestedLoc, vi, load.getIndices(),
-                                  *transferLayout, tensorTy, /*boundary=*/false,
-                                  resultLayout ? &*resultLayout : nullptr)
-                  : emitDiscreteGather(nested, nestedLoc, vi, vi.base,
-                                       load.getIndices(), vi.sparseDims,
-                                       tensorTy);
+          result = transferLayout
+                       ? emitBlockLoad(nested, nestedLoc, vi,
+                                       load.getIndices(), *transferLayout,
+                                       tensorTy, /*boundary=*/false)
+                       : emitDiscreteGather(nested, nestedLoc, vi, vi.base,
+                                            load.getIndices(), vi.sparseDims,
+                                            tensorTy);
         } else {
           bool collapsed = transferLayout->collapses(vi.rank);
           auto localType = MemRefType::get(vi.tile, vi.elementType);
@@ -938,22 +756,16 @@ static LogicalResult lowerViewLoad(tv::ViewLoadOp load,
         nested.create<scf::YieldOp>(nestedLoc, result);
       },
       [&](OpBuilder &nested, Location nestedLoc) {
-        Value result =
-            transferLayout
-                ? emitBlockLoad(nested, nestedLoc, vi, load.getIndices(),
-                                *transferLayout, tensorTy, /*boundary=*/true,
-                                resultLayout ? &*resultLayout : nullptr)
-                : emitDiscreteGather(nested, nestedLoc, vi, vi.base,
-                                     load.getIndices(), vi.sparseDims,
-                                     tensorTy);
+        Value result = transferLayout
+                           ? emitBlockLoad(nested, nestedLoc, vi,
+                                           load.getIndices(), *transferLayout,
+                                           tensorTy, /*boundary=*/true)
+                           : emitDiscreteGather(nested, nestedLoc, vi, vi.base,
+                                                load.getIndices(),
+                                                vi.sparseDims, tensorTy);
         nested.create<scf::YieldOp>(nestedLoc, result);
       });
-  if (reshape) {
-    rewriter.replaceOp(reshape, guardedLoad.getResults());
-    rewriter.eraseOp(load);
-  } else {
-    rewriter.replaceOp(load, guardedLoad.getResults());
-  }
+  rewriter.replaceOp(load, guardedLoad.getResults());
   return success();
 }
 
