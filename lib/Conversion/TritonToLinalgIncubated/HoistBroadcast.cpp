@@ -23,7 +23,7 @@
 
 #include "incubated/Conversion/TritonToLinalgIncubated/HoistBroadcast.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
-#include "ascend/include/Utils/Utils.h"
+#include "incubated/Utils/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "llvm/ADT/SmallVectorExtras.h"

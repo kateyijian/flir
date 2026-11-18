@@ -21,7 +21,7 @@
  */
 
 #include "incubated/Conversion/TritonToLinalgIncubated/FunctionConverter.h"
-#include "ascend/include/Utils/DebugUtils.h"
+#include "incubated/Utils/DebugUtils.h"
 
 namespace FunctionConverter {
 using namespace mlir;

@@ -23,8 +23,8 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
 #include "incubated/TritonControlFlowOpt/ControlFlowAttrs.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
-#include "ascend/include/Utils/DebugUtils.h"
-#include "ascend/include/Utils/Utils.h"
+#include "incubated/Utils/DebugUtils.h"
+#include "incubated/Utils/Utils.h"
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"

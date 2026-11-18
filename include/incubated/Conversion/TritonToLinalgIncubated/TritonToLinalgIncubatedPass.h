@@ -23,7 +23,7 @@
 #ifndef TRITON_ADAPTER_CONVERSION_TRITONTOLINALG_H
 #define TRITON_ADAPTER_CONVERSION_TRITONTOLINALG_H
 
-#include "ascend/include/Utils/Utils.h"
+#include "incubated/Utils/Utils.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Pass/Pass.h"

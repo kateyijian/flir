@@ -22,7 +22,7 @@
 
 #include "incubated/Conversion/TritonToLinalgIncubated/IncubatedCompat.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
-#include "ascend/include/Utils/Utils.h"
+#include "incubated/Utils/Utils.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"

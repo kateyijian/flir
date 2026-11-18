@@ -24,7 +24,7 @@
 #define TRITON_ADAPTER_ARGMINMAXCONVERTER_H
 
 #include "ConversionPatterns.h"
-#include "ascend/include/Utils/Utils.h"
+#include "incubated/Utils/Utils.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
 

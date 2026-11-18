@@ -42,7 +42,7 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
 #include "ascend/include/TritonToStructured/CannonicalizerConverter.h"
 #include "ascend/include/TritonToUnstructure/UnstructureConversionPass.h"
-#include "ascend/include/Utils/InterleaveOptimization.h"
+#include "incubated/Utils/InterleaveOptimization.h"
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"

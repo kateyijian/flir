@@ -25,7 +25,7 @@
 #include "incubated/TritonMemoryAccess/LoadStoreMaskAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonOpConverter.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
-#include "Utils/Utils.h"
+#include "incubated/Utils/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "llvm/ADT/SmallVectorExtras.h"

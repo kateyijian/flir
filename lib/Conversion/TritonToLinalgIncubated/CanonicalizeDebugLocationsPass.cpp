@@ -35,7 +35,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "incubated/Conversion/TritonToLinalgIncubated/CanonicalizeDebugLocationsPass.h"
-#include "Utils/DebugUtils.h"
+#include "incubated/Utils/DebugUtils.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Location.h"

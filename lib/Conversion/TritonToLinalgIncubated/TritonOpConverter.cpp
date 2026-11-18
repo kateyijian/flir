@@ -25,8 +25,8 @@
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
 #include "incubated/TritonMemoryAccess/LoadStoreMaskAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
-#include "ascend/include/Utils/DebugUtils.h"
-#include "ascend/include/Utils/Utils.h"
+#include "incubated/Utils/DebugUtils.h"
+#include "incubated/Utils/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
