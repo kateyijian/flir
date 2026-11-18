@@ -23,7 +23,7 @@
 
 #include <cstdlib>
 
-#include "TritonControlFlowOpt/ControlFlowRewrite.h"
+#include "incubated/TritonControlFlowOpt/ControlFlowAttrs.h"
 #include "incubated/TritonToGraph/LayoutMemoryOptimization.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
 #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"

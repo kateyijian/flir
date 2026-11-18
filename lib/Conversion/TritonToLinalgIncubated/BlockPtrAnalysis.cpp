@@ -21,7 +21,7 @@
  */
 
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
-#include "ascend/include/TritonControlFlowOpt/ControlFlowRewrite.h"
+#include "incubated/TritonControlFlowOpt/ControlFlowAttrs.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
 #include "ascend/include/Utils/DebugUtils.h"
 #include "ascend/include/Utils/Utils.h"
