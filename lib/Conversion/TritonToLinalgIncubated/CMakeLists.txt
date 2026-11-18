@@ -31,29 +31,15 @@ set(TritonToLinalgIncubatedLinkLibs
   TritonIR
   TritonTransforms
   TritonAnalysis
-  MLIRTritonNPUUtils
   MLIRSCFTransforms
   MLIRLinalgTransforms
   ${TleToLinalgLib}
 )
 
 # Phase A: the Ascend-specific helpers still live in third_party/ascend.
-# When this target is built as part of the Ascend backend, link them here.
-if(FLAGTREE_BACKEND STREQUAL "ascend")
-  list(APPEND TritonToLinalgIncubatedLinkLibs
-    BiShengIRHIVMDialect
-    BiShengIRHFusionDialect
-    BiShengIRAnnotationDialect
-    BiShengIRScopeDialect
-    TritonAscendIR
-    TritonStructuredIR
-    TritonMemoryAccessAnalysis
-    TritonToStructured
-    TritonToUnstructure
-    TritonToGraph
-    TritonControlFlowOpt
-  )
-endif()
+# They are linked from third_party/ascend/CMakeLists.txt after the Ascend
+# libraries have been defined, so this target can be created early enough for
+# DiscreteMaskAccessConversion to link it.
 
 add_triton_library(TritonToLinalgIncubated
   ${TritonToLinalgIncubatedSources}
