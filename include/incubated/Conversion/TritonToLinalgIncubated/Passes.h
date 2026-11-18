@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,16 +23,15 @@
 #ifndef TRITON_ADAPTER_TRITON_TO_LINALG_CONVERSION_PASSES_H
 #define TRITON_ADAPTER_TRITON_TO_LINALG_CONVERSION_PASSES_H
 
-#include "incubated/Conversion/TritonToLinalgIncubated/MarkTensorKindPass.h"
-#include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
+#include "DeduplicateDebugNopsPass.h"
+#include "MarkTensorKindPass.h"
+#include "TritonToLinalgIncubatedPass.h"
 
-namespace mlir::triton {
-namespace Incubated {
+namespace mlir::triton::Incubated {
 
 #define GEN_PASS_REGISTRATION
 #include "incubated/Conversion/TritonToLinalgIncubated/Passes.h.inc"
 
-} // namespace Incubated
-} // namespace mlir::triton
+} // namespace mlir::triton::Incubated
 
 #endif // TRITON_ADAPTER_TRITON_TO_LINALG_CONVERSION_PASSES_H

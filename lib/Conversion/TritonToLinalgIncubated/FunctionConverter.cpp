@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,7 @@
  */
 
 #include "incubated/Conversion/TritonToLinalgIncubated/FunctionConverter.h"
+#include "incubated/Utils/DebugUtils.h"
 
 namespace FunctionConverter {
 using namespace mlir;
@@ -36,6 +37,9 @@ LogicalResult GetProgramIDConverter::matchAndRewrite(
   auto numArgs = func.getNumArguments();
   auto id = func.getArgument(numArgs - GetProgramIDConverter::LAUNCH_GRID_RANK +
                              axis);
+
+  Location pidLoc = op.getLoc();
+  insertDebugNop(pidLoc, rewriter);
   rewriter.replaceOp(op, id);
   return success();
 }
@@ -50,6 +54,9 @@ LogicalResult GetNumProgramsConverter::matchAndRewrite(
   auto numArgs = func.getNumArguments();
   auto id = func.getArgument(
       numArgs - GetNumProgramsConverter::LAUNCH_GRID_RANK * 2 + axis);
+
+  Location numProgsLoc = op.getLoc();
+  insertDebugNop(numProgsLoc, rewriter);
   rewriter.replaceOp(op, id);
   return success();
 }

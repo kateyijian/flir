@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,7 +31,7 @@
 
 namespace mlir {
 namespace triton {
-namespace Incubated {
+
 enum class UseType {
   Undefined, // Initial state
   DataUse,   // value used for tensor computation only
@@ -136,8 +136,6 @@ public:
 };
 
 LogicalResult runUseAnalysis(triton::FuncOp &funcOp);
-
-} // namespace Incubated
 
 } // namespace triton
 

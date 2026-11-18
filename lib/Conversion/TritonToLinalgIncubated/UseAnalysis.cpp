@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -20,12 +20,12 @@
  * THE SOFTWARE.
  */
 
+#include "incubated/Conversion/TritonToLinalgIncubated/IncubatedCompat.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/UseAnalysis.h"
-#include "incubated/Conversion/UtilsIncubated/Utils.h"
+#include "incubated/Utils/Utils.h"
 
-#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#endif
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #ifdef __TLE_STRUCT__
 #include "tle/dialect/include/IR/Dialect.h"
@@ -33,7 +33,6 @@
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
@@ -41,7 +40,7 @@
 using namespace mlir;
 using namespace triton;
 using namespace dataflow;
-using namespace mlir::triton::Incubated;
+
 #define DEBUG_TYPE "triton-use-analysis"
 
 std::string stringifyUseType(UseType useTy) {
@@ -59,9 +58,9 @@ std::string stringifyUseType(UseType useTy) {
 }
 
 #if LLVM_VERSION_MAJOR >= 20
-LogicalResult triton::Incubated::UseAnalysis::visitOperation(
-    Operation *op, ArrayRef<UseInfo *> operands,
-    ArrayRef<const UseInfo *> results) {
+LogicalResult
+triton::UseAnalysis::visitOperation(Operation *op, ArrayRef<UseInfo *> operands,
+                                    ArrayRef<const UseInfo *> results) {
 #else
 void triton::UseAnalysis::visitOperation(Operation *op,
                                          ArrayRef<UseInfo *> operands,
@@ -90,8 +89,10 @@ void triton::UseAnalysis::visitOperation(Operation *op,
           propagateUse(operands[2], UseType::MetaUse);
         }
       })
-      .Case<triton::PrintOp>(
-          [&](auto print) { propagateUse(operands[0], UseType::DataUse); })
+      .Case<triton::PrintOp>([&](auto print) {
+        for (auto operand : operands)
+          propagateUse(operand, UseType::DataUse);
+      })
       .Case<triton::AssertOp>(
           [&](auto assert) { propagateUse(operands[0], UseType::DataUse); })
       .Case<triton::StoreOp>([&](auto store) {
@@ -106,13 +107,11 @@ void triton::UseAnalysis::visitOperation(Operation *op,
       })
       .Case<triton::ascend::IndirectStoreOp>([&](auto store) {
         propagateUse(operands[0], UseType::MetaUse);
-        propagateUse(operands[1], UseType::MetaUse);
+        propagateUse(operands[1], UseType::DataUse);
         propagateUse(operands[2], UseType::DataUse);
-        auto value = store.getValue();
         auto mask = store.getMask();
         if (mask) {
-          assert(mask != value && "mask and data cannot be the same");
-          propagateUse(operands[3], UseType::MetaUse);
+          propagateUse(operands[3], UseType::DataUse);
         }
       })
       // Consider triton::AtomicRMWOp as store operation
@@ -160,10 +159,20 @@ void triton::UseAnalysis::visitOperation(Operation *op,
           propagateUse(operand, UseType::DataUse);
         }
       })
+      .Case<tensor::ExtractOp>([&](auto extractOp) {
+        for (auto operand : operands) {
+          propagateUse(operand, UseType::DataUse);
+        }
+      })
       .Case<hivm::FixpipeOp>(
           [&](auto fixpipeOp) { propagateUse(operands[0], UseType::DataUse); })
       .Case<hivm::CopyOp>(
           [&](auto copyOp) { propagateUse(operands[0], UseType::DataUse); })
+      .Case<hivm::CustomOp, hivm::CustomMacroOp>([&](auto customOp) {
+        for (auto operand : operands) {
+          propagateUse(operand, UseType::MixUse);
+        }
+      })
       .Default([&](Operation *op) {
         // this condition account for tt.addptr
         for (auto operand : operands) {
@@ -285,7 +294,7 @@ void postProcessLoopOp(LoopLikeOpInterface loopOp,
   }
 }
 
-LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
+LogicalResult triton::runUseAnalysis(triton::FuncOp &funcOp) {
   MLIRContext *context = funcOp.getContext();
   SymbolTableCollection symbolTable;
 
@@ -336,13 +345,9 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
         }
       }
       if (!isa<mlir::scf::IfOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-               triton::ReduceOp, hivm::CustomOp>(op)) {
-        // Side-effect-only ops (e.g. memref.copy) have 0 results and cannot
-        // be tagged for meta computation; treat them as no-ops for analysis.
-        if (op->getNumResults() == 0)
-          return;
-        // Multi-result ops (e.g. tt.call returning (i32, i32) for swizzle)
-        // are allowed; the per-result loop below will only tag shaped results.
+               scope::ScopeOp, triton::ReduceOp>(op)) {
+        assert(op->getNumResults() == 1 &&
+               "Ops used for meta computation are expected to have one result");
       }
       for (auto it = 0; it < op->getNumResults(); ++it) {
         // Only set the tag if the operation uses tensors
@@ -393,9 +398,9 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
             })
             .Case<triton::ascend::IndirectStoreOp>([&](auto indirectstore) {
               auto src = indirectstore.getSrc();
-              auto offset = indirectstore.getOffsets();
-              auto mask = indirectstore.getMask();
-              if (result == src || result == offset || result == mask) {
+              // Only src is MetaUse (see visitOperation). offsets/value/mask
+              // are DataUse
+              if (result == src) {
                 metaUsers.insert(user);
               }
             })
@@ -423,6 +428,12 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
               }
             })
             .Case<triton::PrintOp>([&](auto print) {})
+            .Case<hivm::CustomOp, hivm::CustomMacroOp>([](auto) {
+              // Custom operands are MixUse in visitOperation, even when all
+              // results are used only as memory addresses. Keep the call on
+              // the materialized value, not a MetaUse clone that is erased
+              // before the custom operation's operands are converted.
+            })
             .Default([&](Operation *op) {
               bool allMeta = true;
               for (auto res : op->getResults()) {
@@ -493,8 +504,7 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
     // We first trace from the 1st load to the 2nd load with the ops between
     // them marked as MixUse. Then we traceback from the 2nd load to mark defs
     // MixUse.
-    if (opIsIndirectLoad(op) || opIsIndirectCalc(op) ||
-        isa<triton::ascend::IndirectStoreOp>(op)) {
+    if (opIsIndirectLoad(op) || opIsIndirectCalc(op)) {
       LLVM_DEBUG({
         os << "[UseAnalysis] Found indirect load interface op: " << *op << "\n";
       });
@@ -506,23 +516,23 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
           [op](Operation *curOp) { return isMetaUse(curOp) && curOp != op; },
           /*stopFn*/
           [&](Operation *curOp) {
-      // triton::LoadOp or triton::StoreOp without MetaUse means
-      // it is an indirect load or store
-      // instead of the load providing the offset.
-      // The pattern is as follows,
-      // load -> ops -> load
-      // load -> ops -> store
-      // We need to ensure the intermediate ops are marked MixUse
-      // so that they will be replaced instead of be erased without
-      // conversion.
+            // triton::LoadOp or triton::StoreOp without MetaUse means
+            // it is an indirect load or store
+            // instead of the load providing the offset.
+            // The pattern is as follows,
+            // load -> ops -> load
+            // load -> ops -> store
+            // We need to ensure the intermediate ops are marked MixUse
+            // so that they will be replaced instead of be erased without
+            // conversion.
 #ifdef __TLE_STRUCT__
-            return (isa<triton::LoadOp>(curOp) || isa<triton::StoreOp>(curOp) ||
-                    isa<triton::ascend::IndirectStoreOp>(curOp) ||
-                    isa<triton::tle::DSACopyOp>(curOp)) &&
+            return (isa<triton::LoadOp, triton::StoreOp,
+                        triton::ascend::IndirectStoreOp,
+                        triton::tle::DSACopyOp>(curOp)) &&
                    !isMetaUse(curOp);
 #else
-            return (isa<triton::LoadOp>(curOp) || isa<triton::StoreOp>(curOp) ||
-                    isa<triton::ascend::IndirectStoreOp>(curOp)) &&
+            return (isa<triton::LoadOp, triton::StoreOp,
+                        triton::ascend::IndirectStoreOp>(curOp)) &&
                    !isMetaUse(curOp);
 #endif
           },
@@ -570,8 +580,31 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
       op->removeAttr("MetaUse");
     }
   });
+  // Masked load with non-scalar tensor `other` lowers as
+  // arith.select(mask, loaded, other) so the mask SSA must stay live.
+  funcOp.walk([&](triton::LoadOp load) {
+    Value mask = load.getMask();
+    Value other = load.getOther();
+    if (!mask || !other)
+      return;
+    if (other.getDefiningOp<triton::SplatOp>())
+      return;
+    if (auto c = other.getDefiningOp<arith::ConstantOp>()) {
+      if (auto dense = dyn_cast<DenseElementsAttr>(c.getValue())) {
+        if (dense.isSplat())
+          return;
+      }
+    }
+    if (auto *def = mask.getDefiningOp())
+      setMixUseRecursively(def);
+  });
   // hivm.custom present library call, shouldn't be metause
   funcOp.walk([&](hivm::CustomOp op) {
+    if (isMetaUse(op)) {
+      op->removeAttr("MetaUse");
+    }
+  });
+  funcOp.walk([&](hivm::CustomMacroOp op) {
     if (isMetaUse(op)) {
       op->removeAttr("MetaUse");
     }
@@ -591,6 +624,20 @@ LogicalResult triton::Incubated::runUseAnalysis(triton::FuncOp &funcOp) {
   return success();
 }
 
+static bool isScalarI1ToI8PointerBitcast(Operation *op) {
+  auto bitcast = dyn_cast<triton::BitcastOp>(op);
+  if (!bitcast)
+    return false;
+
+  auto sourceType = dyn_cast<triton::PointerType>(bitcast.getSrc().getType());
+  auto resultType = dyn_cast<triton::PointerType>(bitcast.getType());
+  if (!sourceType || !resultType)
+    return false;
+
+  return sourceType.getPointeeType().isInteger(1) &&
+         resultType.getPointeeType().isInteger(8);
+}
+
 MetaUseEraser::MetaUseEraser(MLIRContext *context)
     : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/10, context) {}
 
@@ -607,6 +654,9 @@ LogicalResult MetaUseEraser::matchAndRewrite(Operation *op,
     return rewriter.notifyMatchFailure(op,
                                        "AddPtrOp will be handled separately");
   }
+  if (isScalarI1ToI8PointerBitcast(op))
+    return rewriter.notifyMatchFailure(
+        op, "scalar i1-to-i8 pointer bitcast requires conversion");
   if (isMetaUse(op)) {
     rewriter.eraseOp(op);
     return success();

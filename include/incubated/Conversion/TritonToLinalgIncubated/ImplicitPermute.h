@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -20,11 +20,10 @@
  * THE SOFTWARE.
  */
 
-#include "incubated/Conversion/TritonToStructuredIncubated/MaskAnalysis.h"
-#include "incubated/Conversion/TritonToStructuredIncubated/PtrAnalysis.h"
-#if __has_include("bishengir/Dialect/HIVM/IR/HIVM.h")
+#include "incubated/TritonMemoryAccess/MemoryAccessTags.h"
+#include "TritonToStructured/MaskAnalysis.h"
+#include "TritonToStructured/PtrAnalysis.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#endif
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -42,10 +41,16 @@ namespace ImplicitPermute {
 using namespace mlir;
 using namespace triton;
 
+// Tag attached to load/store/atomic ops that this pass rewrote, so downstream
+// sub-steps (e.g. StridedLoadStoreRewrite) can detect "already handled by
+// ImplicitPermute" and avoid double-processing.
+inline constexpr const char *ImplicitPermuteHandledTAG =
+    mlir::triton::memory_access::ImplicitPermuteHandledTAG;
+
 class LoadConverter : public OpRewritePattern<triton::LoadOp> {
 public:
   explicit LoadConverter(MLIRContext *context)
-      : OpRewritePattern<triton::LoadOp>(context){};
+      : OpRewritePattern<triton::LoadOp>(context) {};
 
   using OpRewritePattern<triton::LoadOp>::OpRewritePattern;
 
@@ -56,7 +61,7 @@ public:
 class StoreConverter : public OpRewritePattern<triton::StoreOp> {
 public:
   explicit StoreConverter(MLIRContext *context)
-      : OpRewritePattern<triton::StoreOp>(context){};
+      : OpRewritePattern<triton::StoreOp>(context) {};
 
   using OpRewritePattern<triton::StoreOp>::OpRewritePattern;
 
@@ -67,7 +72,7 @@ public:
 class AtomicRMWConverter : public OpRewritePattern<triton::AtomicRMWOp> {
 public:
   explicit AtomicRMWConverter(MLIRContext *context)
-      : OpRewritePattern<triton::AtomicRMWOp>(context){};
+      : OpRewritePattern<triton::AtomicRMWOp>(context) {};
 
   using OpRewritePattern<triton::AtomicRMWOp>::OpRewritePattern;
 
@@ -78,7 +83,7 @@ public:
 class AtomicCASConverter : public OpRewritePattern<triton::AtomicCASOp> {
 public:
   explicit AtomicCASConverter(MLIRContext *context)
-      : OpRewritePattern<triton::AtomicCASOp>(context){};
+      : OpRewritePattern<triton::AtomicCASOp>(context) {};
 
   using OpRewritePattern<triton::AtomicCASOp>::OpRewritePattern;
 
@@ -88,8 +93,8 @@ public:
 
 class MemOpTransformer {
 public:
-  TritonToStructuredIncubated::PtrState ptrState;
-  TritonToStructuredIncubated::MaskState maskState;
+  TritonToStructured::PtrState ptrState;
+  TritonToStructured::MaskState maskState;
 
   enum class MemType { load, store, deafaultType };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  * Copyright (c) Microsoft Corporation.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -23,7 +23,7 @@
 
 #include "incubated/Conversion/TritonToLinalgIncubated/HoistBroadcast.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
-#include "incubated/Conversion/UtilsIncubated/Utils.h"
+#include "incubated/Utils/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "llvm/ADT/SmallVectorExtras.h"

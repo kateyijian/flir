@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -59,21 +59,21 @@
 
 #include "incubated/Conversion/TritonToLinalgIncubated/ImplicitPermute.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
-#include "incubated/Conversion/TritonToStructuredIncubated/CannonicalizerConverter.h"
-#include "incubated/Conversion/TritonToStructuredIncubated/MaskAnalysis.h"
-#include "incubated/Conversion/TritonToStructuredIncubated/PtrAnalysis.h"
+#include "TritonToStructured/CannonicalizerConverter.h"
+#include "TritonToStructured/MaskAnalysis.h"
+#include "TritonToStructured/PtrAnalysis.h"
 
+#include "incubated/Utils/InterleaveOptimization.h"
+#include "incubated/Utils/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "incubated/Conversion/UtilsIncubated/InterleaveOptimization.h"
-#include "incubated/Conversion/UtilsIncubated/Utils.h"
 
 #define DEBUG_TYPE "triton-to-linalg-implicit-permute"
 
 namespace ImplicitPermute {
 using namespace mlir;
 using namespace triton;
-using namespace TritonToStructuredIncubated;
+using namespace TritonToStructured;
 
 LogicalResult LoadConverter::matchAndRewrite(triton::LoadOp op,
                                              PatternRewriter &rewriter) const {
@@ -83,8 +83,7 @@ LogicalResult LoadConverter::matchAndRewrite(triton::LoadOp op,
       llvm::dbgs() << "----------------------------------------------\n";
       llvm::dbgs() << "compileOn91095Flag :" << compileOn91095Flag << "\n";
       llvm::dbgs() << "!existDotFlag :" << !existDotFlag << "\n";
-      llvm::dbgs() << "no need to analyze and rewrite Load"
-                   << "\n";
+      llvm::dbgs() << "no need to analyze and rewrite Load" << "\n";
       llvm::dbgs() << "----------------------------------------------\n";
     });
     return success();
@@ -135,6 +134,8 @@ LogicalResult LoadConverter::matchAndRewrite(triton::LoadOp op,
   auto loadOp = rewriter.create<triton::LoadOp>(
       loc, newPtr, newMask, newOther, newBoundaryCheck, op.getPadding(),
       op.getCache(), op.getEvict(), op.getIsVolatile());
+  loadOp->setAttr(ImplicitPermuteHandledTAG,
+                  UnitAttr::get(rewriter.getContext()));
 
   auto permuteResult =
       tf.materializeImplicitPermute(loadOp.getResult(), loc, rewriter);
@@ -189,6 +190,8 @@ LogicalResult StoreConverter::matchAndRewrite(triton::StoreOp op,
   auto storeOp = rewriter.create<triton::StoreOp>(loc, newPtr, permuteResult,
                                                   newMask, newBoundaryCheck,
                                                   op.getCache(), op.getEvict());
+  storeOp->setAttr(ImplicitPermuteHandledTAG,
+                   UnitAttr::get(rewriter.getContext()));
 
   rewriter.eraseOp(op);
   return success();
@@ -233,6 +236,8 @@ AtomicRMWConverter::matchAndRewrite(triton::AtomicRMWOp op,
   auto newAtomic = rewriter.create<triton::AtomicRMWOp>(
       loc, newAtomicResTy, op.getAtomicRmwOp(), newPtr, newVal, newMask,
       op.getSem(), op.getScope());
+  newAtomic->setAttr(ImplicitPermuteHandledTAG,
+                     UnitAttr::get(rewriter.getContext()));
 
   // The returned old value should be in OLD layout for users => permute back
   // (load-side).
@@ -279,6 +284,8 @@ AtomicCASConverter::matchAndRewrite(triton::AtomicCASOp op,
 
   auto newAtomic = rewriter.create<triton::AtomicCASOp>(
       loc, newAtomicResTy, newPtr, newCmp, newVal, op.getSem(), op.getScope());
+  newAtomic->setAttr(ImplicitPermuteHandledTAG,
+                     UnitAttr::get(rewriter.getContext()));
 
   MemOpTransformer tfLoad(MemOpTransformer::MemType::load);
   tfLoad.ptrState = tf.ptrState;
@@ -333,7 +340,7 @@ Value MemOpTransformer::materializeImplicitPermute(Value srcTensor,
 
 Value MemOpTransformer::createNewAddPtr(Value oldPtr, const Location loc,
                                         PatternRewriter &rewriter) {
-  TritonToStructuredIncubated::PtrAnalysis ptrAnalysis;
+  TritonToStructured::PtrAnalysis ptrAnalysis;
 
   LLVM_DEBUG({
     llvm::dbgs() << "----------------------------------------------\n";
@@ -355,7 +362,7 @@ Value MemOpTransformer::createNewAddPtr(Value oldPtr, const Location loc,
   OpFoldResult maxStride = rewriter.getIndexAttr(1);
   for (auto it = ptrState.stateInfo.rbegin(); it != ptrState.stateInfo.rend();
        ++it) {
-    if (TritonToStructuredIncubated::isOne(it->shape) && isZero(it->stride)) {
+    if (TritonToStructured::isOne(it->shape) && isZero(it->stride)) {
       it->stride = maxStride;
     }
     maxStride = maxOpFoldResult(maxStride, it->stride, loc, rewriter);
@@ -367,7 +374,7 @@ Value MemOpTransformer::createNewAddPtr(Value oldPtr, const Location loc,
 
 Value MemOpTransformer::createNewTensorPtr(Value oldPtr, const Location loc,
                                            PatternRewriter &rewriter) {
-  TritonToStructuredIncubated::PtrAnalysis ptrAnalysis;
+  TritonToStructured::PtrAnalysis ptrAnalysis;
   auto makeTPtrOp = oldPtr.getDefiningOp<triton::MakeTensorPtrOp>();
   if (!makeTPtrOp) {
     InFlightDiagnostic diag = emitWarning(loc)
@@ -393,7 +400,7 @@ Value MemOpTransformer::createNewTensorPtr(Value oldPtr, const Location loc,
 
 Value MemOpTransformer::createNewAdvancePtr(Value oldPtr, const Location loc,
                                             PatternRewriter &rewriter) {
-  TritonToStructuredIncubated::PtrAnalysis ptrAnalysis;
+  TritonToStructured::PtrAnalysis ptrAnalysis;
   auto advOp = oldPtr.getDefiningOp<triton::AdvanceOp>();
   if (!advOp) {
     emitWarning(loc)
@@ -448,7 +455,7 @@ Value MemOpTransformer::createNewMask(Value oldMask, const Location loc,
     return nullptr;
   }
 
-  SmallVector<TritonToStructuredIncubated::dimInfo> newMaskInfo;
+  SmallVector<TritonToStructured::dimInfo> newMaskInfo;
   auto itPtr = ptrState.stateInfo.begin();
   auto itMask = maskState.stateInfo.begin();
 
@@ -478,9 +485,9 @@ Value MemOpTransformer::createNewMask(Value oldMask, const Location loc,
       return nullptr;
     }
 
-    TritonToStructuredIncubated::dimInfo newInfo(
-        itMask->offset, newShape, itMask->dimIndex, itMask->hasBroadCast,
-        itMask->currentType, itMask->rhs);
+    TritonToStructured::dimInfo newInfo(itMask->offset, newShape,
+                                        itMask->dimIndex, itMask->hasBroadCast,
+                                        itMask->currentType, itMask->rhs);
 
     if (!isZero(itPtr->stride)) {
       newMaskInfo.emplace_back(newInfo);
@@ -618,7 +625,7 @@ bool MemOpTransformer::applyPermuteOnMask() {
   if (ptrState.permuteIds.size() != maskState.stateInfo.size()) {
     return false;
   }
-  SmallVector<TritonToStructuredIncubated::dimInfo> newMaskInfo;
+  SmallVector<TritonToStructured::dimInfo> newMaskInfo;
   for (auto id : ptrState.permuteIds) {
     newMaskInfo.push_back(maskState.stateInfo[id]);
   }

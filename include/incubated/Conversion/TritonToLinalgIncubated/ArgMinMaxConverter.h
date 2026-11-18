@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,8 +23,8 @@
 #ifndef TRITON_ADAPTER_ARGMINMAXCONVERTER_H
 #define TRITON_ADAPTER_ARGMINMAXCONVERTER_H
 
-#include "incubated/Conversion/TritonToLinalgIncubated/ConversionPatterns.h"
-#include "incubated/Conversion/UtilsIncubated/Utils.h"
+#include "ConversionPatterns.h"
+#include "incubated/Utils/Utils.h"
 
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
@@ -347,6 +347,9 @@ public:
 
   ArgMaxConverter(MLIRContext *context) : ArgMinMaxBaseConverter(context) {}
 };
+
+void populatePostConversionCanonicalizationPatterns(
+    RewritePatternSet &patterns);
 
 } // namespace TTOpConverters
 

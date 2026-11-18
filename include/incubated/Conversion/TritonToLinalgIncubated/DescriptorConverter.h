@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,7 +35,6 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
-#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Debug.h"
 
 namespace DescriptorConverter {
@@ -46,9 +45,7 @@ struct Descriptor {
   Value base;
   SmallVector<Value> shape;
   SmallVector<Value> strides;
-#if LLVM_VERSION_MAJOR >= 22
   triton::PaddingOptionAttr padding;
-#endif
 };
 
 bool hasATensorDescriptorType(mlir::TypeRange types);
@@ -70,6 +67,36 @@ public:
 
   LogicalResult
   matchAndRewrite(triton::DescriptorStoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+};
+
+class DescriptorGatherConverter
+    : public OpConversionPattern<triton::DescriptorGatherOp> {
+public:
+  using OpConversionPattern<triton::DescriptorGatherOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::DescriptorGatherOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+};
+
+class DescriptorScatterConverter
+    : public OpConversionPattern<triton::DescriptorScatterOp> {
+public:
+  using OpConversionPattern<triton::DescriptorScatterOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::DescriptorScatterOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+};
+
+class DescriptorReduceConverter
+    : public OpConversionPattern<triton::DescriptorReduceOp> {
+public:
+  using OpConversionPattern<triton::DescriptorReduceOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::DescriptorReduceOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
 };
 
