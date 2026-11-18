@@ -31,6 +31,7 @@ set(TritonToLinalgIncubatedLinkLibs
   TritonIR
   TritonTransforms
   TritonAnalysis
+  FlirTritonMemoryAccessAnalysis
   MLIRSCFTransforms
   MLIRLinalgTransforms
   ${TleToLinalgLib}

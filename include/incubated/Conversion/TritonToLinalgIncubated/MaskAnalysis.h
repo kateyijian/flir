@@ -26,6 +26,6 @@
 
 // Compatibility shim: the public MaskState API is owned by the neutral
 // TritonMemoryAccess layer so Graph can use it without depending on T2L.
-#include "TritonMemoryAccess/LoadStoreMaskAnalysis.h"
+#include "incubated/TritonMemoryAccess/LoadStoreMaskAnalysis.h"
 
 #endif // TRITON_ANALYSIS_MASKANALYSIS_H

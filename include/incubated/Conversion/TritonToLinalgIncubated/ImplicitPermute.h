@@ -20,7 +20,7 @@
  * THE SOFTWARE.
  */
 
-#include "TritonMemoryAccess/MemoryAccessTags.h"
+#include "incubated/TritonMemoryAccess/MemoryAccessTags.h"
 #include "TritonToStructured/MaskAnalysis.h"
 #include "TritonToStructured/PtrAnalysis.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"

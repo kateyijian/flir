@@ -23,7 +23,7 @@
 
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonOpConverter.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
-#include "TritonMemoryAccess/LoadStoreMaskAnalysis.h"
+#include "incubated/TritonMemoryAccess/LoadStoreMaskAnalysis.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
 #include "ascend/include/Utils/DebugUtils.h"
 #include "ascend/include/Utils/Utils.h"
