@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,11 +23,14 @@
 #ifndef TRITON_ADAPTER_CONVERSION_TRITONTOLINALG_H
 #define TRITON_ADAPTER_CONVERSION_TRITONTOLINALG_H
 
+#include "ascend/include/Utils/Utils.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
+
+#include <string>
 
 #define GEN_PASS_CLASSES
 #include "incubated/Conversion/TritonToLinalgIncubated/Passes.h.inc"
@@ -35,6 +38,7 @@
 extern int nd2nzFlag;
 extern bool compileOn91095Flag;
 extern bool existDotFlag;
+extern mlir::triton::ascend::CompileMode compileModeFlag;
 
 namespace mlir {
 namespace triton {
@@ -43,7 +47,8 @@ namespace Incubated {
 std::unique_ptr<OperationPass<ModuleOp>> createTritonToLinalgIncubatedPass();
 
 std::unique_ptr<OperationPass<ModuleOp>>
-createTritonToLinalgIncubatedPass(bool, bool, bool, bool, bool);
+createTritonToLinalgIncubatedPass(bool, bool, bool, bool, bool,
+                         const std::string &compileMode = "simd_simt_template");
 
 } // namespace Incubated
 } // namespace triton
@@ -60,8 +65,7 @@ public:
   explicit TritonTypeConverter();
 };
 
-class TritonToLinalgIncubatedPass
-    : public TritonToLinalgIncubatedBase<TritonToLinalgIncubatedPass> {
+class TritonToLinalgIncubatedPass : public TritonToLinalgIncubatedBase<TritonToLinalgIncubatedPass> {
 
   static auto constexpr LAUNCH_GRID_RANK = getMaxEnumValForProgramIDDim() + 1;
   static unsigned int constexpr TRITON_PROGRAM_INFO_ARG_COUNT =
@@ -94,19 +98,21 @@ private:
   LogicalResult processDescriptorOperations(ModuleOp moduleOp);
   LogicalResult processPtrBroadcastOperations(ModuleOp moduleOp);
   LogicalResult processImplicitPermuteOperations(ModuleOp moduleOp);
+  LogicalResult processStridedLoadStoreRewriteOperations(ModuleOp moduleOp);
   LogicalResult processLegalStrideOperations(ModuleOp moduleOp);
 
 public:
   TritonToLinalgIncubatedPass() = default;
 
-  TritonToLinalgIncubatedPass(bool globalKernel, bool namedOps,
-                              bool enableNd2nzOnVector,
-                              bool enableSelectAnalysis, bool compileOn91095) {
+  TritonToLinalgIncubatedPass(bool globalKernel, bool namedOps, bool enableNd2nzOnVector,
+                     bool enableSelectAnalysis, bool compileOn91095,
+                     const std::string &compileMode = "simd_simt_template") {
     this->globalKernel = globalKernel;
     this->namedOps = namedOps;
     this->enableNd2nzOnVector = enableNd2nzOnVector;
     this->enableSelectAnalysis = enableSelectAnalysis;
     this->compileOn91095 = compileOn91095;
+    this->compileMode = compileMode;
   };
 
   void getDependentDialects(DialectRegistry &registry) const override;

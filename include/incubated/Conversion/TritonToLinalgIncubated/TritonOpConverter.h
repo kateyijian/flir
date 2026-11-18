@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2025.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
  * Copyright (c) Microsoft Corporation.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -24,25 +24,22 @@
 #ifndef TRITON_ADAPTER_TRITONOPCONVERTER_H
 #define TRITON_ADAPTER_TRITONOPCONVERTER_H
 
+#include "incubated/Conversion/TritonToLinalgIncubated/IncubatedCompat.h"
+#include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
 #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
-#include "incubated/Conversion/TritonToLinalgIncubated/TritonToLinalgIncubatedPass.h"
-#include "incubated/Conversion/UtilsIncubated/Utils.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
 
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/TypeSwitch.h"
-#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "triton-to-linalg"
@@ -79,9 +76,14 @@ public:
 Convert `tt.fp_to_fp` operation with RTNE (default) rounding mode to
 `arith.truncf` or `arith.extf` operation.
 
-For fp8 conversions with default RTNE rounding:
+For default RTNE rounding:
 - downcast: tt.fp_to_fp -> arith.truncf
 - upcast: tt.fp_to_fp -> arith.extf
+- same-bitwidth conversions between distinct floating-point formats:
+  tt.fp_to_fp -> arith.extf (to f32) -> arith.truncf
+
+Only an operation whose complete input and result MLIR types are identical can
+be eliminated as an identity conversion.
 
 Note: Non-RTNE rounding modes (e.g., RTZ) are handled by TritonToHFusion pass.
 */
@@ -110,40 +112,6 @@ public:
                                 PatternRewriter &rewriter) const override;
 };
 
-/*
- * True when `v` feeds a tt.addptr offset through scalar or tensor arith/math
- * and tt.splat. A value may also have data uses; one offset use is sufficient.
- * Do not follow arbitrary users such as loads, stores, or region operations.
- */
-inline bool scalarValueFeedsPointerOffset(Value v) {
-  llvm::SmallVector<Value> worklist{v};
-  llvm::SmallPtrSet<Operation *, 8> seen;
-  while (!worklist.empty()) {
-    Value cur = worklist.pop_back_val();
-    for (OpOperand &use : cur.getUses()) {
-      Operation *user = use.getOwner();
-      if (auto addPtr = dyn_cast<triton::AddPtrOp>(user)) {
-        if (addPtr.getOffset() == cur)
-          return true;
-        continue;
-      }
-      if (!seen.insert(user).second || user->getNumResults() != 1)
-        continue;
-      if (!isa<triton::SplatOp>(user) &&
-          !isa<arith::ArithDialect, math::MathDialect>(user->getDialect()))
-        continue;
-      Value res = user->getResult(0);
-      Type type = res.getType();
-      if (auto tensorType = dyn_cast<RankedTensorType>(type))
-        type = tensorType.getElementType();
-      if (!type.isIntOrIndexOrFloat())
-        continue;
-      worklist.push_back(res);
-    }
-  }
-  return false;
-}
-
 template <typename MathOp>
 class ScalarMathCanonicalizer : public OpRewritePattern<MathOp> {
 public:
@@ -168,7 +136,7 @@ public:
     // tensor form is the only one that lowers, so they keep being splatted and
     // the use analysis leaves the result alone instead of tagging it MetaUse.
     if (!mlir::triton::hasOnlyVectorizedDeviceImpl(op) &&
-        scalarValueFeedsPointerOffset(op->getResult(0))) {
+        mlir::triton::scalarValueFeedsPointerOffset(op->getResult(0))) {
       return rewriter.notifyMatchFailure(
           op, "ScalarMathCanonicalizer skips pointer-offset computation.");
     }
@@ -179,6 +147,12 @@ public:
     if (auto linalgOp = op->template getParentOfType<triton::ScanOp>()) {
       return rewriter.notifyMatchFailure(
           op, "ScalarMathCanonicalizer handles op not within tt.scan.");
+    }
+    if (auto linalgOp =
+            op->template getParentOfType<triton::MapElementwiseOp>()) {
+      return rewriter.notifyMatchFailure(
+          op,
+          "ScalarMathCanonicalizer handles op not within tt.map_elementwise.");
     }
     auto loc = op.getLoc();
     llvm::SmallVector<Value> inputs;
@@ -242,7 +216,6 @@ public:
                   ConversionPatternRewriter &rewriter) const override;
 };
 
-#if LLVM_VERSION_MAJOR >= 22
 class UnsplatConverter : public OpConversionPattern<triton::UnsplatOp> {
 public:
   using OpConversionPattern<triton::UnsplatOp>::OpConversionPattern;
@@ -251,7 +224,6 @@ public:
   matchAndRewrite(triton::UnsplatOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
 };
-#endif
 
 class ReshapeConverter : public OpConversionPattern<triton::ReshapeOp> {
 public:
@@ -319,10 +291,30 @@ protected:
   }
 
   llvm::SmallVector<Operation *> getRealReductionOps(OpTy reductionOp) const {
+    auto *body = reductionOp.getBody();
+    auto *terminator = body->getTerminator();
+
+    // Compute the backward slice from yielded values: only ops that
+    // actually contribute to the computation of the reduction result
+    // are considered.
+    llvm::DenseSet<Operation *> liveOps;
+    llvm::SmallVector<Value> worklist(terminator->getOperands());
+    while (!worklist.empty()) {
+      Value val = worklist.pop_back_val();
+      if (auto *defOp = val.getDefiningOp()) {
+        if (defOp->getBlock() == body && liveOps.insert(defOp).second) {
+          for (auto operand : defOp->getOperands())
+            worklist.push_back(operand);
+        }
+      }
+    }
+
+    // Count only live ops, excluding type conversions that serve as
+    // precision promotion or demotion (e.g. bf16 -> f32 -> bf16).
     llvm::SmallVector<Operation *> realOps;
-    for (Operation &bodyOp : reductionOp.getBody()->without_terminator()) {
-      // Skips non-reduce operations, including type conversion operations (this
-      // can be extended as needed).
+    for (Operation &bodyOp : body->without_terminator()) {
+      if (!liveOps.contains(&bodyOp))
+        continue;
       if (isa<arith::ExtFOp, arith::TruncFOp, arith::BitcastOp>(&bodyOp))
         continue;
       realOps.push_back(&bodyOp);
@@ -515,6 +507,36 @@ protected:
                             ConversionPatternRewriter &rewriter) const override;
 };
 
+/*
+ * Decompose tt.map_elementwise region body into tensor-level Named Ops.
+ * Each scalar op (arith, math, scf.if, etc.) is promoted to its tensor
+ * counterpart, producing a chain of independent Named Ops.
+ */
+class MapElementwiseDecomposeConverter
+    : public OpConversionPattern<triton::MapElementwiseOp> {
+public:
+  using OpConversionPattern<triton::MapElementwiseOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::MapElementwiseOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+
+private:
+  // Promote a single scalar op to tensor-level and record the result in
+  // valueMap.  Returns the tensor result values (one per op result).
+  SmallVector<Value> promoteOp(Operation *op,
+                               llvm::DenseMap<Value, Value> &valueMap,
+                               OpBuilder &builder, Location loc,
+                               ArrayRef<int64_t> tensorShape) const;
+
+  // Promote ops in a region body (excluding terminator), return the yielded
+  // tensor values from the terminator.
+  SmallVector<Value> promoteRegionBody(Region &region,
+                                       llvm::DenseMap<Value, Value> &valueMap,
+                                       OpBuilder &builder, Location loc,
+                                       ArrayRef<int64_t> tensorShape) const;
+};
+
 class ExternElementwiseClOpConverter
     : public OpConversionPattern<triton::ExternElementwiseOp> {
 public:
@@ -569,6 +591,66 @@ public:
                   ConversionPatternRewriter &rewriter) const override;
 };
 
+// These predicates select only scalar !tt.ptr<T> transports. A
+// tensor<...x!tt.ptr<T>> follows the separate tensor-pointer lowering.
+bool hasScalarPointerResult(scf::IfOp op);
+bool isScalarPointerSelect(arith::SelectOp op);
+
+// Marks an scf.if temporarily rebuilt by IfConverter. Its scalar-pointer
+// results are represented as complete i64 addresses, so only its own yields
+// require the matching pointer-to-address conversion.
+inline constexpr llvm::StringLiteral kScalarPointerCarrierBoundaryAttr =
+    "ScalarPointerCarrierBoundary";
+
+// Rebuild an scf.if with scalar-pointer results so the boundary carries
+// complete i64 addresses and reconstructs memrefs only after the join.
+// The original branch regions are moved into the new operation, preserving
+// side effects and allowing the conversion driver to rewrite each scf.yield
+// operand in place.
+//
+// Example:
+//   %base = scf.if %cond -> !tt.ptr<f32> {
+//     scf.yield %lhs : !tt.ptr<f32>
+//   } else {
+//     scf.yield %rhs : !tt.ptr<f32>
+//   }
+//   %ptr = tt.make_tensor_ptr %base, ...
+// becomes an scf.if returning i64 plus one hivm.pointer_cast after the if.
+class IfConverter : public OpConversionPattern<scf::IfOp> {
+public:
+  using OpConversionPattern<scf::IfOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(scf::IfOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+};
+
+// Convert a scalar-pointer select into a select over complete integer addresses
+// and reconstruct one memref after the selection. This handles both BlockPtr
+// bases and ordinary scalar pointers without asking the backend to merge two
+// memory objects.
+//
+// Example:
+//   %base = arith.select %cond, %lhs, %rhs : !tt.ptr<f32>
+//   %ptr = tt.make_tensor_ptr %base, ...
+// becomes:
+//   %lhs_addr = memref.extract_aligned_pointer_as_index %lhs
+//   %rhs_addr = memref.extract_aligned_pointer_as_index %rhs
+//   %selected_addr = arith.select %cond, %lhs_addr, %rhs_addr : i64
+//   %base = hivm.pointer_cast %selected_addr : i64 to memref<?xf32>
+class PointerSelectConverter : public OpConversionPattern<arith::SelectOp> {
+public:
+  using OpConversionPattern<arith::SelectOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+};
+
+// Convert the yields of an IfConverter-created scf.if to its carrier result
+// types. In particular, a yielded scalar pointer becomes its complete i64
+// address. Yields belonging to ordinary ifs or loops are intentionally left to
+// their owning conversions.
 class YieldConverter : public OpConversionPattern<scf::YieldOp> {
 public:
   using OpConversionPattern<scf::YieldOp>::OpConversionPattern;
@@ -589,11 +671,15 @@ public:
   matchAndRewrite(LoopOpTy op,
                   typename OpConversionPattern<LoopOpTy>::OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    // CFO-expanded descriptor loops already carry pointer-free policy values
+    // and remain structurally unchanged. This legacy BlockData rewrite is only
+    // valid for explicitly marked legacy loops.
+    if (!op->hasAttr("UnhandledLoopOp"))
+      return failure();
     llvm::SmallDenseMap<Value, BlockData> known;
 
-    op->removeAttr("UnhandledLoopOp");
-    BlockDataParser::rewriteLoopOp(op, rewriter, known);
-    return success();
+    rewriter.modifyOpInPlace(op, [&]() { op->removeAttr("UnhandledLoopOp"); });
+    return BlockDataParser::rewriteLoopOp(op, rewriter, known, {});
   }
 };
 
@@ -687,6 +773,14 @@ struct MatmulConverter : public OpConversionPattern<triton::DotOp> {
                   ConversionPatternRewriter &rewriter) const override;
 };
 
+struct DotConverter : public OpConversionPattern<triton::ascend::DotOp> {
+  using OpConversionPattern<triton::ascend::DotOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::ascend::DotOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+};
+
 struct FlipOpConverter : public OpConversionPattern<triton::ascend::FlipOp> {
   using OpConversionPattern<triton::ascend::FlipOp>::OpConversionPattern;
 
@@ -721,22 +815,18 @@ public:
                   ConversionPatternRewriter &rewriter) const override;
 };
 
-// A scalar-pointer arith.select cannot be expressed
-// as a single structured memref base, so it is rebuilt from a complete integer
-// address (materialize both operands, select on i64, reconstruct the pointer
-// carrier with hivm.pointer_cast).
-class PointerSelectConverter : public OpConversionPattern<arith::SelectOp> {
+class IntToPtrConverter : public OpConversionPattern<triton::IntToPtrOp> {
 public:
-  using OpConversionPattern<arith::SelectOp>::OpConversionPattern;
+  using OpConversionPattern<triton::IntToPtrOp>::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(arith::SelectOp op, OpAdaptor adaptor,
+  matchAndRewrite(triton::IntToPtrOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
 };
 
 class IndexPutConverter
     : public OpConversionPattern<triton::ascend::IndexPutOp> {
 public:
-  using OpConversionPattern<triton::ascend::IndexPutOp>::OpConversionPattern;
+  using OpConversionPattern::OpConversionPattern;
   LogicalResult
   matchAndRewrite(triton::ascend::IndexPutOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
@@ -784,6 +874,30 @@ private:
   static constexpr llvm::StringRef funcNameBase = "triton_indirect_load";
 };
 
+class StrideLoadConverter
+    : public OpConversionPattern<triton::ascend::StrideLoadOp> {
+public:
+  using OpConversionPattern<triton::ascend::StrideLoadOp>::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(triton::ascend::StrideLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+
+private:
+  static constexpr llvm::StringRef funcNameBase = "triton_stride_load";
+};
+
+class StrideStoreConverter
+    : public OpConversionPattern<triton::ascend::StrideStoreOp> {
+public:
+  using OpConversionPattern<triton::ascend::StrideStoreOp>::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(triton::ascend::StrideStoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+
+private:
+  static constexpr llvm::StringRef funcNameBase = "triton_stride_store";
+};
+
 class IndirectStoreConverter
     : public OpConversionPattern<triton::ascend::IndirectStoreOp> {
 public:
@@ -806,6 +920,15 @@ public:
 
   LogicalResult
   matchAndRewrite(triton::ascend::IndexSelectSimdOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override;
+};
+
+class HistogramConverter : public OpConversionPattern<triton::HistogramOp> {
+public:
+  using OpConversionPattern<triton::HistogramOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::HistogramOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override;
 };
 
