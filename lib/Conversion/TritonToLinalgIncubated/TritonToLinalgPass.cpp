@@ -24,7 +24,7 @@
 #include <cstdlib>
 
 #include "TritonControlFlowOpt/ControlFlowRewrite.h"
-#include "TritonToGraph/LayoutMemoryOptimization.h"
+#include "incubated/TritonToGraph/LayoutMemoryOptimization.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/BlockPtrAnalysis.h"
 #include "ascend/include/Dialect/TritonAscend/IR/TritonAscendDialect.h"
 #include "incubated/Conversion/TritonToLinalgIncubated/ArgMinMaxConverter.h"

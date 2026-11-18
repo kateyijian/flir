@@ -23,7 +23,7 @@
 #ifndef TRITON_ASCEND_TILE_CHUNK_COALESCING_H
 #define TRITON_ASCEND_TILE_CHUNK_COALESCING_H
 
-#include "TritonToGraph/LegacyMemoryAccess/ChunkCoalescing.h"
+#include "incubated/TritonToGraph/LegacyMemoryAccess/ChunkCoalescing.h"
 
 namespace TileChunkCoalescing {
 

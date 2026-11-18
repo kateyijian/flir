@@ -25,6 +25,6 @@
 
 // Compatibility shim. The implementation is owned by TritonToGraph and is
 // scheduled only through its original T2L compatibility slot.
-#include "TritonToGraph/LegacyMemoryAccess/StridedAxisCoalescing.h"
+#include "incubated/TritonToGraph/LegacyMemoryAccess/StridedAxisCoalescing.h"
 
 #endif // TRITON_ASCEND_STRIDED_AXIS_COALESCING_H

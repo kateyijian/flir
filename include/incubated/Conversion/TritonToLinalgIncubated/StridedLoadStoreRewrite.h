@@ -25,6 +25,6 @@
 
 // Compatibility shim. The greedy pattern stage is owned by TritonToGraph and
 // invoked only from the original T2L compatibility slot.
-#include "TritonToGraph/LegacyMemoryAccess/StridedLoadStoreRewrite.h"
+#include "incubated/TritonToGraph/LegacyMemoryAccess/StridedLoadStoreRewrite.h"
 
 #endif // TRITON_ASCEND_STRIDED_LOAD_STORE_REWRITE_H
